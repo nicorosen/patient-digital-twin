@@ -309,8 +309,20 @@ def seed_database() -> None:
         seed_james_thompson(db)
         seed_sarah_chen(db)
 
+        # Auto-index all patients for RAG search
+        print("\nIndexing patients for RAG search...")
+        from src.rag import get_retriever
+
+        retriever = get_retriever()
+        patients = PatientRepository.get_all(db)
+        total_docs = 0
+        for patient in patients:
+            count = retriever.index_patient(db, patient.id)
+            total_docs += count
+        print(f"Indexed {total_docs} documents for {len(patients)} patients.")
+
         print("\n" + "-" * 60)
-        print("Database seeded successfully!")
+        print("Database seeded and indexed successfully!")
         print("-" * 60)
 
         # Print summary

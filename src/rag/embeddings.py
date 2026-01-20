@@ -10,6 +10,9 @@ from typing import List
 from sentence_transformers import SentenceTransformer
 
 from src.config import get_settings
+from src.logging_config import get_logger
+
+logger = get_logger("rag.embeddings")
 
 
 class EmbeddingService:
@@ -29,7 +32,10 @@ class EmbeddingService:
         """Lazy load the embedding model."""
         if self._model is None:
             settings = get_settings()
+            logger.info(f"Loading embedding model: {settings.embedding_model}")
             self._model = SentenceTransformer(settings.embedding_model)
+            dim = self._model.get_sentence_embedding_dimension()
+            logger.info(f"Embedding model loaded: dimension={dim}")
         return self._model
 
     def embed_text(self, text: str) -> List[float]:

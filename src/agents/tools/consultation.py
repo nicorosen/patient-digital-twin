@@ -22,7 +22,10 @@ from src.database.repositories import (
     MedicationRepository,
     PatientRepository,
 )
+from src.logging_config import get_logger
 from src.schemas import DeidentifiedContext
+
+logger = get_logger("agents.tools.consultation")
 
 
 def calculate_age(birth_date: date) -> int:
@@ -58,9 +61,11 @@ def create_deidentified_context(patient_id: UUID) -> DeidentifiedContext:
     Returns:
         De-identified context for specialist consultation.
     """
+    logger.debug(f"Creating de-identified context for patient_id={patient_id}")
     with get_db() as db:
         patient = PatientRepository.get_by_id(db, patient_id)
         if not patient:
+            logger.warning(f"Patient not found for de-identification: {patient_id}")
             raise ValueError(f"Patient not found: {patient_id}")
 
         # Get active conditions
@@ -87,13 +92,17 @@ def create_deidentified_context(patient_id: UUID) -> DeidentifiedContext:
                 allergy_str += f" [{allergy.criticality}]"
             allergy_strs.append(allergy_str)
 
-        return DeidentifiedContext(
+        context = DeidentifiedContext(
             age=calculate_age(patient.date_of_birth),
             gender=patient.gender,
             conditions=condition_names,
             medications=medication_strs,
             allergies=allergy_strs,
         )
+        logger.debug(f"De-identified context created: age={context.age}, gender={context.gender}, "
+                     f"conditions={len(condition_names)}, medications={len(medication_strs)}, "
+                     f"allergies={len(allergy_strs)}")
+        return context
 
 
 def format_specialist_response(response: SpecialistResponse) -> str:
@@ -172,20 +181,27 @@ def consult_primary_care(patient_id: str, clinical_question: str) -> str:
         - Referenced clinical guidelines
         - Confidence level and limitations
     """
+    logger.info(f"consult_primary_care called: patient_id={patient_id}, question_length={len(clinical_question)}")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     try:
         # Create de-identified context
+        logger.debug("Creating de-identified context for consultation")
         context = create_deidentified_context(patient_uuid)
 
         # Get specialist consultation
+        logger.info("Invoking Primary Care specialist")
         specialist = get_primary_care_specialist()
         response = specialist.consult(context, clinical_question)
+        logger.info(f"Specialist response received: confidence={response.confidence}, "
+                    f"recommendations={len(response.recommendations)}, red_flags={len(response.red_flags)}")
 
         # Log the consultation for audit
+        logger.debug("Creating audit log entry")
         with get_db() as db:
             AuditLogRepository.create(
                 db=db,
@@ -215,12 +231,17 @@ def consult_primary_care(patient_id: str, clinical_question: str) -> str:
                     "limitations": response.limitations,
                 },
             )
+        logger.debug("Audit log entry created")
 
-        return format_specialist_response(response)
+        formatted_response = format_specialist_response(response)
+        logger.info(f"Consultation completed, response_length={len(formatted_response)}")
+        return formatted_response
 
     except ValueError as e:
+        logger.error(f"Value error in consultation: {e}")
         return f"Error: {str(e)}"
     except Exception as e:
+        logger.error(f"Error consulting specialist: {e}", exc_info=True)
         return f"Error consulting specialist: {str(e)}"
 
 

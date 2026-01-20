@@ -13,7 +13,10 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from src.config import get_settings
+from src.logging_config import get_logger
 from src.rag.embeddings import get_embedding_service
+
+logger = get_logger("rag.vectorstore")
 
 
 class PatientVectorStore:
@@ -24,6 +27,7 @@ class PatientVectorStore:
     def __init__(self):
         """Initialize the vector store."""
         settings = get_settings()
+        logger.info(f"Initializing PatientVectorStore: persist_dir={settings.chroma_persist_dir}")
 
         # Ensure persist directory exists
         os.makedirs(settings.chroma_persist_dir, exist_ok=True)
@@ -41,6 +45,8 @@ class PatientVectorStore:
             name=self.COLLECTION_NAME,
             metadata={"description": "Patient clinical data for RAG"},
         )
+        doc_count = self._collection.count()
+        logger.info(f"VectorStore ready: collection={self.COLLECTION_NAME}, documents={doc_count}")
 
     def add_document(
         self,
@@ -135,7 +141,11 @@ class PatientVectorStore:
         Returns:
             List of matching documents with metadata and distances.
         """
+        logger.debug(f"VectorStore.search: query='{query}'")
+        logger.debug(f"  patient_id={patient_id}, n_results={n_results}, doc_type={doc_type}")
+
         query_embedding = self._embedding_service.embed_text(query)
+        logger.debug(f"  Query embedding: dim={len(query_embedding)}, first_5={query_embedding[:5]}")
 
         # Build where clause for filtering
         where_clause = {"patient_id": str(patient_id)}
@@ -146,6 +156,24 @@ class PatientVectorStore:
                     {"doc_type": doc_type},
                 ]
             }
+        logger.debug(f"  Where clause: {where_clause}")
+
+        # Check how many docs exist for this patient
+        patient_docs = self._collection.get(
+            where={"patient_id": str(patient_id)},
+            include=["metadatas"],
+        )
+        num_docs = len(patient_docs['ids'])
+        if num_docs == 0:
+            logger.warning(f"  NO DOCUMENTS INDEXED for patient {patient_id}!")
+            logger.warning(f"  Run 'python run.py --index' to index patient data for RAG")
+        else:
+            logger.info(f"  Total docs for patient: {num_docs}")
+            doc_types_in_store = {}
+            for meta in patient_docs['metadatas']:
+                dt = meta.get('doc_type', 'unknown')
+                doc_types_in_store[dt] = doc_types_in_store.get(dt, 0) + 1
+            logger.info(f"  Docs by type: {doc_types_in_store}")
 
         results = self._collection.query(
             query_embeddings=[query_embedding],
@@ -158,13 +186,20 @@ class PatientVectorStore:
         documents = []
         if results["documents"] and results["documents"][0]:
             for i, doc in enumerate(results["documents"][0]):
+                distance = results["distances"][0][i] if results["distances"] else None
+                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
                 documents.append(
                     {
                         "content": doc,
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "distance": results["distances"][0][i] if results["distances"] else None,
+                        "metadata": metadata,
+                        "distance": distance,
                     }
                 )
+                dist_str = f"{distance:.4f}" if distance is not None else "N/A"
+                logger.debug(f"  Result [{i}]: distance={dist_str}, "
+                           f"type={metadata.get('doc_type')}, content_len={len(doc)}")
+        else:
+            logger.warning(f"  No results returned from Chroma query")
 
         return documents
 

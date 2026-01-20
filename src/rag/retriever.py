@@ -19,7 +19,10 @@ from src.database.repositories import (
     MedicationRepository,
     PatientRepository,
 )
+from src.logging_config import get_logger
 from src.rag.vectorstore import get_vectorstore
+
+logger = get_logger("rag.retriever")
 
 
 class PatientRetriever:
@@ -40,6 +43,7 @@ class PatientRetriever:
         Returns:
             Number of documents indexed.
         """
+        logger.info(f"Indexing patient: {patient_id}")
         doc_ids = []
         contents = []
         patient_ids = []
@@ -75,6 +79,10 @@ class PatientRetriever:
 
         # Batch add to vector store
         if contents:
+            logger.info(f"  Indexing {len(contents)} documents: "
+                       f"{len(conditions)} conditions, {len(medications)} medications, {len(allergies)} allergies")
+            for i, (doc_id, content) in enumerate(zip(doc_ids, contents)):
+                logger.debug(f"    [{i}] {doc_id}: {content[:80]}...")
             self._vectorstore.add_documents(
                 doc_ids=doc_ids,
                 contents=contents,
@@ -82,6 +90,9 @@ class PatientRetriever:
                 doc_types=doc_types,
                 item_ids=item_ids,
             )
+            logger.info(f"  Successfully indexed {len(contents)} documents for patient {patient_id}")
+        else:
+            logger.warning(f"  No documents to index for patient {patient_id}")
 
         return len(contents)
 
@@ -92,12 +103,15 @@ class PatientRetriever:
         Returns:
             Total number of documents indexed.
         """
+        logger.info("Starting to index all patients...")
         total = 0
         with get_db() as db:
             patients = PatientRepository.get_all(db)
+            logger.info(f"Found {len(patients)} patients to index")
             for patient in patients:
                 count = self.index_patient(db, patient.id)
                 total += count
+        logger.info(f"Indexing complete: {total} total documents indexed")
         return total
 
     def search(
@@ -119,12 +133,22 @@ class PatientRetriever:
         Returns:
             List of matching documents with content and metadata.
         """
-        return self._vectorstore.search(
+        logger.info(f"RAG search: query='{query}', patient_id={patient_id}, n_results={n_results}")
+        results = self._vectorstore.search(
             query=query,
             patient_id=patient_id,
             n_results=n_results,
             doc_type=doc_type,
         )
+        logger.info(f"RAG search returned {len(results)} results")
+        for i, r in enumerate(results):
+            dist = r.get('distance', 'N/A')
+            doc_type_r = r.get('metadata', {}).get('doc_type', 'unknown')
+            content_preview = r.get('content', '')[:100]
+            dist_str = f"{dist:.4f}" if isinstance(dist, float) else str(dist)
+            logger.debug(f"  [{i}] type={doc_type_r}, distance={dist_str}")
+            logger.debug(f"      content: {content_preview}...")
+        return results
 
     def get_context(
         self,
@@ -143,9 +167,11 @@ class PatientRetriever:
         Returns:
             Formatted string with relevant clinical context.
         """
+        logger.debug(f"get_context called: query='{query}', patient_id={patient_id}")
         results = self.search(query, patient_id, n_results)
 
         if not results:
+            logger.warning(f"No results found for query: '{query}'")
             return "No relevant clinical information found."
 
         context_parts = ["Relevant clinical information:"]
@@ -154,7 +180,9 @@ class PatientRetriever:
             content = result["content"]
             context_parts.append(f"\n{i}. [{doc_type.upper()}] {content}")
 
-        return "\n".join(context_parts)
+        context = "\n".join(context_parts)
+        logger.debug(f"Context built: {len(context)} chars, {len(results)} documents")
+        return context
 
     def add_condition_document(
         self,

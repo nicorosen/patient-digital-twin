@@ -20,6 +20,7 @@ from src.database.repositories import (
     MedicationRepository,
     PatientRepository,
 )
+from src.logging_config import get_logger
 from src.rag import get_retriever
 from src.schemas import (
     AllergyCategory,
@@ -31,6 +32,8 @@ from src.schemas import (
     MedicationStatus,
     Severity,
 )
+
+logger = get_logger("agents.tools.patient_data")
 
 
 def _parse_date(date_str: Optional[str]) -> Optional[date]:
@@ -63,14 +66,17 @@ def get_patient_profile(patient_id: str) -> str:
     Returns:
         A formatted string with the patient's complete health profile.
     """
+    logger.info(f"get_patient_profile called for patient_id={patient_id}")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     with get_db() as db:
         profile = PatientRepository.get_profile(db, patient_uuid)
         if not profile:
+            logger.warning(f"Patient not found: {patient_id}")
             return f"Error: Patient not found with ID: {patient_id}"
 
         patient = profile.patient
@@ -117,6 +123,8 @@ def get_patient_profile(patient_id: str) -> str:
         else:
             lines.append("- No known allergies")
 
+        logger.debug(f"Retrieved profile: conditions={len(profile.conditions)}, "
+                     f"medications={len(profile.medications)}, allergies={len(profile.allergies)}")
         return "\n".join(lines)
 
 
@@ -136,13 +144,18 @@ def search_patient_data(patient_id: str, query: str) -> str:
     Returns:
         Relevant clinical information matching the query.
     """
+    logger.info(f"search_patient_data called: patient_id={patient_id}")
+    logger.info(f"  Query: '{query}'")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     retriever = get_retriever()
     context = retriever.get_context(query, patient_uuid, n_results=5)
+    logger.info(f"search_patient_data result: {len(context)} chars")
+    logger.debug(f"Full RAG context:\n{context}")
     return context
 
 
@@ -175,15 +188,18 @@ def add_condition(
     Returns:
         Confirmation message with the added condition details.
     """
+    logger.info(f"add_condition called: patient_id={patient_id}, condition={display_name}")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     # Parse clinical status
     try:
         status = ClinicalStatus(clinical_status.lower())
     except ValueError:
+        logger.warning(f"Invalid clinical status: {clinical_status}")
         return f"Error: Invalid clinical status '{clinical_status}'. Use: active, inactive, resolved, remission"
 
     # Parse severity if provided
@@ -192,6 +208,7 @@ def add_condition(
         try:
             sev = Severity(severity.lower())
         except ValueError:
+            logger.warning(f"Invalid severity: {severity}")
             return f"Error: Invalid severity '{severity}'. Use: mild, moderate, severe"
 
     # Parse onset date
@@ -201,6 +218,7 @@ def add_condition(
         # Verify patient exists
         patient = PatientRepository.get_by_id(db, patient_uuid)
         if not patient:
+            logger.warning(f"Patient not found: {patient_id}")
             return f"Error: Patient not found with ID: {patient_id}"
 
         # Create condition
@@ -214,6 +232,7 @@ def add_condition(
             notes=notes,
         )
         condition = ConditionRepository.create(db, condition_data)
+        logger.debug(f"Created condition in database: id={condition.id}")
 
         # Index in vector store
         retriever = get_retriever()
@@ -222,7 +241,9 @@ def add_condition(
             condition_id=condition.id,
             content=condition.to_document(),
         )
+        logger.debug("Indexed condition in vector store")
 
+        logger.info(f"Successfully added condition: {display_name} for patient {patient_id}")
         return (
             f"Successfully added condition: {display_name}\n"
             f"- Status: {clinical_status}\n"
@@ -264,15 +285,18 @@ def add_medication(
     Returns:
         Confirmation message with the added medication details.
     """
+    logger.info(f"add_medication called: patient_id={patient_id}, medication={display_name}")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     # Parse medication status
     try:
         med_status = MedicationStatus(status.lower().replace("_", "-"))
     except ValueError:
+        logger.warning(f"Invalid medication status: {status}")
         return f"Error: Invalid status '{status}'. Use: active, on-hold, discontinued"
 
     # Parse start date
@@ -282,6 +306,7 @@ def add_medication(
         # Verify patient exists
         patient = PatientRepository.get_by_id(db, patient_uuid)
         if not patient:
+            logger.warning(f"Patient not found: {patient_id}")
             return f"Error: Patient not found with ID: {patient_id}"
 
         # Create medication
@@ -297,6 +322,7 @@ def add_medication(
             reason=reason,
         )
         medication = MedicationRepository.create(db, medication_data)
+        logger.debug(f"Created medication in database: id={medication.id}")
 
         # Index in vector store
         retriever = get_retriever()
@@ -305,7 +331,9 @@ def add_medication(
             medication_id=medication.id,
             content=medication.to_document(),
         )
+        logger.debug("Indexed medication in vector store")
 
+        logger.info(f"Successfully added medication: {display_name} for patient {patient_id}")
         return (
             f"Successfully added medication: {display_name}\n"
             f"- Dosage: {dosage or 'Not specified'}\n"
@@ -345,15 +373,18 @@ def add_allergy(
     Returns:
         Confirmation message with the added allergy details.
     """
+    logger.info(f"add_allergy called: patient_id={patient_id}, substance={substance}")
     try:
         patient_uuid = UUID(patient_id)
     except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
         return f"Error: Invalid patient ID format: {patient_id}"
 
     # Parse category
     try:
         cat = AllergyCategory(category.lower())
     except ValueError:
+        logger.warning(f"Invalid allergy category: {category}")
         return f"Error: Invalid category '{category}'. Use: medication, food, environment, biologic"
 
     # Parse criticality if provided
@@ -362,6 +393,7 @@ def add_allergy(
         try:
             crit = AllergyCriticality(criticality.lower())
         except ValueError:
+            logger.warning(f"Invalid allergy criticality: {criticality}")
             return f"Error: Invalid criticality '{criticality}'. Use: low, high"
 
     # Parse onset date
@@ -371,6 +403,7 @@ def add_allergy(
         # Verify patient exists
         patient = PatientRepository.get_by_id(db, patient_uuid)
         if not patient:
+            logger.warning(f"Patient not found: {patient_id}")
             return f"Error: Patient not found with ID: {patient_id}"
 
         # Create allergy
@@ -384,6 +417,7 @@ def add_allergy(
             onset_date=onset,
         )
         allergy = AllergyRepository.create(db, allergy_data)
+        logger.debug(f"Created allergy in database: id={allergy.id}")
 
         # Index in vector store
         retriever = get_retriever()
@@ -392,8 +426,10 @@ def add_allergy(
             allergy_id=allergy.id,
             content=allergy.to_document(),
         )
+        logger.debug("Indexed allergy in vector store")
 
         crit_str = f" [{criticality}]" if criticality else ""
+        logger.info(f"Successfully added allergy: {substance} for patient {patient_id}")
         return (
             f"Successfully added allergy: {substance}{crit_str}\n"
             f"- Category: {category}\n"

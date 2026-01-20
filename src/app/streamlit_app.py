@@ -8,11 +8,52 @@ Provides:
 - Consultation audit log viewer
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to Python path for imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Load .env file BEFORE setting up logging so LOG_LEVEL is available
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env")
+
 import streamlit as st
 
 from src.agents import MedicalAssistant
 from src.database import get_db
 from src.database.repositories import AuditLogRepository, PatientRepository
+from src.logging_config import get_logger, setup_logging
+
+# Initialize logging at app startup
+setup_logging()
+logger = get_logger("app.streamlit")
+
+
+def ensure_patients_indexed():
+    """Ensure all patients are indexed in the vector store for RAG search."""
+    from src.rag import get_retriever
+    from src.rag.vectorstore import get_vectorstore
+
+    retriever = get_retriever()
+    vectorstore = get_vectorstore()
+
+    with get_db() as db:
+        patients = PatientRepository.get_all(db)
+        indexed_count = 0
+        for patient in patients:
+            doc_count = vectorstore.get_document_count(patient.id)
+            if doc_count == 0:
+                logger.info(f"Auto-indexing patient {patient.id} (no documents in vector store)")
+                retriever.index_patient(db, patient.id)
+                indexed_count += 1
+        if indexed_count > 0:
+            logger.info(f"Auto-indexed {indexed_count} patients for RAG search")
+
+
+# Auto-index patients on startup if needed
+ensure_patients_indexed()
 
 # Page configuration
 st.set_page_config(
@@ -129,6 +170,7 @@ def get_suggested_prompts():
 
 def main():
     """Main application entry point."""
+    logger.debug("Starting main application")
     init_session_state()
 
     # Sidebar
@@ -143,6 +185,7 @@ def main():
             patient_options = {f"{p.first_name} {p.last_name}": str(p.id) for p in patients}
 
         if not patient_options:
+            logger.warning("No patients found in database")
             st.warning("No patients found. Please seed the database first.")
             st.code("python -m src.database.seed")
             return
@@ -156,6 +199,7 @@ def main():
         if selected_name:
             new_patient_id = patient_options[selected_name]
             if new_patient_id != st.session_state.patient_id:
+                logger.info(f"Patient changed: {selected_name} (id={new_patient_id})")
                 st.session_state.patient_id = new_patient_id
                 st.session_state.patient_name = selected_name
                 st.session_state.messages = []
@@ -196,24 +240,41 @@ def main():
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
+    # Check if we need to generate a response (last message is from user without response)
+    needs_response = (
+        st.session_state.messages
+        and st.session_state.messages[-1]["role"] == "user"
+    )
+
     # Chat input
     if prompt := st.chat_input("How can I help you today?"):
         # Add user message
+        logger.info(f"User submitted chat message: length={len(prompt)}")
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
+        needs_response = True
+        user_prompt = prompt
+    elif needs_response:
+        user_prompt = st.session_state.messages[-1]["content"]
+    else:
+        user_prompt = None
 
-        # Get agent response
+    # Get agent response if needed
+    if needs_response and user_prompt:
+        logger.debug(f"Generating response for patient={st.session_state.patient_id}")
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
                     from uuid import UUID
 
                     agent = MedicalAssistant(UUID(st.session_state.patient_id))
-                    response = agent.chat(prompt, st.session_state.messages[:-1])
+                    response = agent.chat(user_prompt, st.session_state.messages[:-1])
                     st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
+                    logger.info(f"Agent response generated: length={len(response)}")
                 except Exception as e:
+                    logger.error(f"Error generating response: {e}", exc_info=True)
                     error_msg = f"Sorry, I encountered an error: {str(e)}"
                     st.error(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})

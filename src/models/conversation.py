@@ -29,7 +29,7 @@ class ConversationMessage(Base, UUIDMixin, TimestampMixin):
         patient_id: Reference to the patient this conversation is with
         role: Who sent the message ('user' or 'assistant')
         content: The message content
-        metadata: Optional metadata (tool calls, etc.)
+        message_metadata: Optional metadata (tool calls, etc.)
     """
 
     __tablename__ = "conversation_messages"
@@ -45,7 +45,7 @@ class ConversationMessage(Base, UUIDMixin, TimestampMixin):
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    message_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     def __repr__(self) -> str:
         preview = self.content[:50] + "..." if len(self.content) > 50 else self.content

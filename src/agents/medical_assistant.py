@@ -8,6 +8,7 @@ The patient-facing agent that:
 - Translates clinical information to plain language
 """
 
+import json
 from typing import List, Optional
 from uuid import UUID
 
@@ -15,6 +16,73 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from src.agents.tools import ALL_TOOLS
 from src.llm import get_chat_model
+from src.logging_config import get_logger, Colors, LLMColors
+
+logger = get_logger("agents.medical_assistant")
+
+
+def _format_messages_for_log(messages: List[BaseMessage]) -> str:
+    """Format LangChain messages for readable logging with colors."""
+    lines = []
+
+    # Color mapping for message types
+    type_styles = {
+        "System": (LLMColors.SYSTEM_PROMPT, "SYS"),
+        "Human": (LLMColors.HUMAN_INPUT, "USR"),
+        "AI": (LLMColors.AI_RESPONSE, "AI "),
+        "Tool": (LLMColors.TOOL_RESULT, "TLR"),
+    }
+
+    for i, msg in enumerate(messages):
+        msg_type = type(msg).__name__.replace("Message", "")
+        color, label = type_styles.get(msg_type, (Colors.WHITE, msg_type[:3].upper()))
+
+        content = msg.content
+        # Truncate long content
+        if isinstance(content, str) and len(content) > 500:
+            content = content[:500] + f"... [truncated, {len(msg.content)} chars total]"
+
+        # Format with colors
+        idx = f"{Colors.DIM}[{i}]{Colors.RESET}"
+        tag = f"{color}{Colors.BOLD}{label}{Colors.RESET}"
+        text = f"{color}{content}{Colors.RESET}"
+        lines.append(f"  {idx} {tag} {text}")
+
+    return "\n".join(lines)
+
+
+def _format_response_for_log(response) -> str:
+    """Format LLM response for readable logging with colors."""
+    parts = []
+
+    # Header
+    parts.append(f"{LLMColors.AI_RESPONSE}{Colors.BOLD}━━━ AI RESPONSE ━━━{Colors.RESET}")
+
+    # Content
+    if isinstance(response.content, str):
+        content = response.content
+        if len(content) > 1000:
+            content = content[:1000] + f"... [truncated, {len(response.content)} chars total]"
+        parts.append(f"  {Colors.DIM}Content:{Colors.RESET} {LLMColors.AI_RESPONSE}{content}{Colors.RESET}")
+    elif isinstance(response.content, list):
+        parts.append(f"  {Colors.DIM}Content blocks:{Colors.RESET} {len(response.content)}")
+        for i, block in enumerate(response.content[:3]):  # Show first 3
+            if isinstance(block, dict):
+                parts.append(f"    {Colors.DIM}[{i}]{Colors.RESET} {block.get('type', 'unknown')}: {str(block)[:200]}")
+            else:
+                parts.append(f"    {Colors.DIM}[{i}]{Colors.RESET} {str(block)[:200]}")
+
+    # Tool calls
+    if hasattr(response, "tool_calls") and response.tool_calls:
+        parts.append(f"\n  {LLMColors.TOOL_CALL}{Colors.BOLD}━━━ TOOL CALLS ({len(response.tool_calls)}) ━━━{Colors.RESET}")
+        for tc in response.tool_calls:
+            tool_name = tc.get("name")
+            args_str = json.dumps(tc.get("args", {}), default=str)
+            if len(args_str) > 200:
+                args_str = args_str[:200] + "..."
+            parts.append(f"    {LLMColors.TOOL_CALL}{Colors.BOLD}{tool_name}{Colors.RESET}: {Colors.DIM}{args_str}{Colors.RESET}")
+
+    return "\n".join(parts)
 
 SYSTEM_PROMPT = """You are a Medical Assistant helping a patient manage their health information.
 You have access to the patient's health profile and can help them understand their conditions,
@@ -90,6 +158,7 @@ class MedicalAssistant:
         Args:
             patient_id: UUID of the patient this assistant is helping.
         """
+        logger.info(f"Initializing MedicalAssistant for patient_id={patient_id}")
         self.patient_id = patient_id
 
         # Initialize LLM with tools using the provider factory
@@ -97,6 +166,7 @@ class MedicalAssistant:
 
         # Bind tools to LLM
         self.llm_with_tools = self.llm.bind_tools(ALL_TOOLS)
+        logger.debug(f"Bound {len(ALL_TOOLS)} tools to LLM")
 
     def _build_messages(
         self,
@@ -145,6 +215,11 @@ class MedicalAssistant:
         """
         tool_name = tool_call.get("name")
         tool_args = tool_call.get("args", {})
+        logger.debug(
+            f"{LLMColors.TOOL_CALL}{Colors.BOLD}━━━ EXECUTING TOOL ━━━{Colors.RESET}\n"
+            f"  {Colors.DIM}Name:{Colors.RESET} {LLMColors.TOOL_CALL}{tool_name}{Colors.RESET}\n"
+            f"  {Colors.DIM}Args:{Colors.RESET} {Colors.DIM}{list(tool_args.keys())}{Colors.RESET}"
+        )
 
         # Find and execute the tool
         for tool in ALL_TOOLS:
@@ -153,8 +228,21 @@ class MedicalAssistant:
                 if "patient_id" in tool.args_schema.model_fields:
                     if "patient_id" not in tool_args:
                         tool_args["patient_id"] = str(self.patient_id)
-                return tool.invoke(tool_args)
+                try:
+                    result = tool.invoke(tool_args)
+                    result_preview = str(result)[:500] + "..." if len(str(result)) > 500 else str(result)
+                    logger.info(f"{LLMColors.TOOL_RESULT}Tool {tool_name} executed successfully{Colors.RESET}")
+                    logger.debug(
+                        f"{LLMColors.TOOL_RESULT}{Colors.BOLD}━━━ TOOL RESULT ━━━{Colors.RESET}\n"
+                        f"  {Colors.DIM}Tool:{Colors.RESET} {LLMColors.TOOL_CALL}{tool_name}{Colors.RESET}\n"
+                        f"  {Colors.DIM}Result:{Colors.RESET} {LLMColors.TOOL_RESULT}{result_preview}{Colors.RESET}"
+                    )
+                    return result
+                except Exception as e:
+                    logger.error(f"Tool {tool_name} failed: {e}")
+                    raise
 
+        logger.warning(f"Unknown tool requested: {tool_name}")
         return f"Error: Unknown tool '{tool_name}'"
 
     def chat(
@@ -172,10 +260,22 @@ class MedicalAssistant:
         Returns:
             The assistant's response.
         """
+        logger.info(
+            f"{LLMColors.HUMAN_INPUT}{Colors.BOLD}━━━ USER MESSAGE ━━━{Colors.RESET}\n"
+            f"  {Colors.DIM}Patient:{Colors.RESET} {self.patient_id}\n"
+            f"  {Colors.DIM}Message:{Colors.RESET} {LLMColors.HUMAN_INPUT}{message[:200]}{'...' if len(message) > 200 else ''}{Colors.RESET}"
+        )
+        logger.debug(f"Conversation history: {len(conversation_history or [])} messages")
+
         messages = self._build_messages(message, conversation_history)
 
         # Get initial response
+        logger.debug(
+            f"{Colors.BRIGHT_BLUE}{Colors.BOLD}━━━ LLM INVOCATION ({len(messages)} messages) ━━━{Colors.RESET}\n"
+            f"{_format_messages_for_log(messages)}"
+        )
         response = self.llm_with_tools.invoke(messages)
+        logger.debug(f"LLM response:\n{_format_response_for_log(response)}")
 
         # Handle tool calls if present
         max_iterations = 5
@@ -183,6 +283,10 @@ class MedicalAssistant:
 
         while response.tool_calls and iteration < max_iterations:
             iteration += 1
+            logger.info(
+                f"{LLMColors.TOOL_CALL}{Colors.BOLD}━━━ TOOL LOOP (iteration {iteration}/{max_iterations}) ━━━{Colors.RESET}\n"
+                f"  {Colors.DIM}Tools to execute:{Colors.RESET} {len(response.tool_calls)}"
+            )
 
             # Execute all tool calls
             tool_results = []
@@ -208,11 +312,19 @@ class MedicalAssistant:
                 )
 
             # Get next response
+            logger.debug(
+                f"{Colors.BRIGHT_BLUE}{Colors.BOLD}━━━ LLM INVOCATION (post-tool, iteration {iteration}) ━━━{Colors.RESET}\n"
+                f"{_format_messages_for_log(messages[-3:])}"
+            )
             response = self.llm_with_tools.invoke(messages)
+            logger.debug(f"LLM response:\n{_format_response_for_log(response)}")
+
+        if iteration >= max_iterations and response.tool_calls:
+            logger.warning(f"{Colors.YELLOW}Max iterations ({max_iterations}) reached, still has pending tool calls{Colors.RESET}")
 
         # Extract text content from response
         if isinstance(response.content, str):
-            return response.content
+            final_response = response.content
         elif isinstance(response.content, list):
             # Handle list of content blocks
             text_parts = []
@@ -221,9 +333,16 @@ class MedicalAssistant:
                     text_parts.append(block.get("text", ""))
                 elif isinstance(block, str):
                     text_parts.append(block)
-            return "\n".join(text_parts)
+            final_response = "\n".join(text_parts)
         else:
-            return str(response.content)
+            final_response = str(response.content)
+
+        logger.info(
+            f"{LLMColors.AI_RESPONSE}{Colors.BOLD}━━━ CHAT COMPLETED ━━━{Colors.RESET}\n"
+            f"  {Colors.DIM}Response length:{Colors.RESET} {len(final_response)} chars\n"
+            f"  {Colors.DIM}Tool iterations:{Colors.RESET} {iteration}"
+        )
+        return final_response
 
     async def achat(
         self,
@@ -240,10 +359,22 @@ class MedicalAssistant:
         Returns:
             The assistant's response.
         """
+        logger.info(
+            f"{LLMColors.HUMAN_INPUT}{Colors.BOLD}━━━ USER MESSAGE (ASYNC) ━━━{Colors.RESET}\n"
+            f"  {Colors.DIM}Patient:{Colors.RESET} {self.patient_id}\n"
+            f"  {Colors.DIM}Message:{Colors.RESET} {LLMColors.HUMAN_INPUT}{message[:200]}{'...' if len(message) > 200 else ''}{Colors.RESET}"
+        )
+        logger.debug(f"Conversation history: {len(conversation_history or [])} messages")
+
         messages = self._build_messages(message, conversation_history)
 
         # Get initial response
+        logger.debug(
+            f"{Colors.BRIGHT_BLUE}{Colors.BOLD}━━━ LLM INVOCATION ASYNC ({len(messages)} messages) ━━━{Colors.RESET}\n"
+            f"{_format_messages_for_log(messages)}"
+        )
         response = await self.llm_with_tools.ainvoke(messages)
+        logger.debug(f"LLM response:\n{_format_response_for_log(response)}")
 
         # Handle tool calls if present
         max_iterations = 5
@@ -251,6 +382,10 @@ class MedicalAssistant:
 
         while response.tool_calls and iteration < max_iterations:
             iteration += 1
+            logger.info(
+                f"{LLMColors.TOOL_CALL}{Colors.BOLD}━━━ TOOL LOOP ASYNC (iteration {iteration}/{max_iterations}) ━━━{Colors.RESET}\n"
+                f"  {Colors.DIM}Tools to execute:{Colors.RESET} {len(response.tool_calls)}"
+            )
 
             # Execute all tool calls
             tool_results = []
@@ -276,11 +411,19 @@ class MedicalAssistant:
                 )
 
             # Get next response
+            logger.debug(
+                f"{Colors.BRIGHT_BLUE}{Colors.BOLD}━━━ LLM INVOCATION ASYNC (post-tool, iteration {iteration}) ━━━{Colors.RESET}\n"
+                f"{_format_messages_for_log(messages[-3:])}"
+            )
             response = await self.llm_with_tools.ainvoke(messages)
+            logger.debug(f"LLM response:\n{_format_response_for_log(response)}")
+
+        if iteration >= max_iterations and response.tool_calls:
+            logger.warning(f"{Colors.YELLOW}Max iterations ({max_iterations}) reached, still has pending tool calls{Colors.RESET}")
 
         # Extract text content from response
         if isinstance(response.content, str):
-            return response.content
+            final_response = response.content
         elif isinstance(response.content, list):
             text_parts = []
             for block in response.content:
@@ -288,6 +431,13 @@ class MedicalAssistant:
                     text_parts.append(block.get("text", ""))
                 elif isinstance(block, str):
                     text_parts.append(block)
-            return "\n".join(text_parts)
+            final_response = "\n".join(text_parts)
         else:
-            return str(response.content)
+            final_response = str(response.content)
+
+        logger.info(
+            f"{LLMColors.AI_RESPONSE}{Colors.BOLD}━━━ ASYNC CHAT COMPLETED ━━━{Colors.RESET}\n"
+            f"  {Colors.DIM}Response length:{Colors.RESET} {len(final_response)} chars\n"
+            f"  {Colors.DIM}Tool iterations:{Colors.RESET} {iteration}"
+        )
+        return final_response

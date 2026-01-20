@@ -210,6 +210,9 @@ __marimo__/
 # Patient Digital Twin - Project Specific
 # =============================================================================
 
+# Application logs (can be regenerated)
+logs/
+
 # Chroma vector database (can be regenerated)
 data/embeddings/
 

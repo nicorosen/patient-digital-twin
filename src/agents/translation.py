@@ -9,6 +9,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agents.primary_care import SpecialistResponse
 from src.llm import get_chat_model
+from src.logging_config import get_logger
+
+logger = get_logger("agents.translation")
 
 TRANSLATION_PROMPT = """You are a medical translator helping patients understand clinical information.
 
@@ -68,6 +71,9 @@ def translate_specialist_response(response: SpecialistResponse) -> str:
     Returns:
         Patient-friendly translation of the response.
     """
+    logger.info(f"Translating specialist response: recommendations={len(response.recommendations)}, "
+                f"red_flags={len(response.red_flags)}, confidence={response.confidence}")
+
     llm = get_chat_model(max_tokens=2048)
 
     # Build the content to translate
@@ -99,16 +105,18 @@ def translate_specialist_response(response: SpecialistResponse) -> str:
         content_parts.append(f"**Limitations:** {response.limitations}")
 
     content = "\n".join(content_parts)
+    logger.debug(f"Content to translate: {len(content)} chars")
 
     messages = [
         SystemMessage(content=TRANSLATION_PROMPT),
         HumanMessage(content=content),
     ]
 
+    logger.debug("Invoking LLM for translation")
     result = llm.invoke(messages)
 
     if isinstance(result.content, str):
-        return result.content
+        translated = result.content
     elif isinstance(result.content, list):
         text_parts = []
         for block in result.content:
@@ -116,9 +124,12 @@ def translate_specialist_response(response: SpecialistResponse) -> str:
                 text_parts.append(block.get("text", ""))
             elif isinstance(block, str):
                 text_parts.append(block)
-        return "\n".join(text_parts)
+        translated = "\n".join(text_parts)
     else:
-        return str(result.content)
+        translated = str(result.content)
+
+    logger.info(f"Translation completed, result_length={len(translated)}")
+    return translated
 
 
 async def atranslate_specialist_response(response: SpecialistResponse) -> str:
@@ -131,6 +142,9 @@ async def atranslate_specialist_response(response: SpecialistResponse) -> str:
     Returns:
         Patient-friendly translation of the response.
     """
+    logger.info(f"Async translating specialist response: recommendations={len(response.recommendations)}, "
+                f"red_flags={len(response.red_flags)}, confidence={response.confidence}")
+
     llm = get_chat_model(max_tokens=2048)
 
     # Build the content to translate
@@ -162,16 +176,18 @@ async def atranslate_specialist_response(response: SpecialistResponse) -> str:
         content_parts.append(f"**Limitations:** {response.limitations}")
 
     content = "\n".join(content_parts)
+    logger.debug(f"Content to translate: {len(content)} chars")
 
     messages = [
         SystemMessage(content=TRANSLATION_PROMPT),
         HumanMessage(content=content),
     ]
 
+    logger.debug("Invoking LLM (async) for translation")
     result = await llm.ainvoke(messages)
 
     if isinstance(result.content, str):
-        return result.content
+        translated = result.content
     elif isinstance(result.content, list):
         text_parts = []
         for block in result.content:
@@ -179,6 +195,9 @@ async def atranslate_specialist_response(response: SpecialistResponse) -> str:
                 text_parts.append(block.get("text", ""))
             elif isinstance(block, str):
                 text_parts.append(block)
-        return "\n".join(text_parts)
+        translated = "\n".join(text_parts)
     else:
-        return str(result.content)
+        translated = str(result.content)
+
+    logger.info(f"Async translation completed, result_length={len(translated)}")
+    return translated
