@@ -205,3 +205,19 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# =============================================================================
+# Patient Digital Twin - Project Specific
+# =============================================================================
+
+# Chroma vector database (can be regenerated)
+data/embeddings/
+
+# Keep synthetic data directory but ignore any real patient data
+data/patients/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Claude Code plans (local only)
+.claude/

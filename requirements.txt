@@ -1,0 +1,34 @@
+# Patient Digital Twin - Dependencies
+# Generated for 2-week MVP implementation
+
+# Core LLM
+anthropic>=0.40.0              # Claude API client
+langchain>=0.3.0               # Agent orchestration framework
+langchain-anthropic>=0.3.0     # LangChain + Claude integration
+langchain-chroma>=0.2.0        # LangChain + Chroma integration
+
+# Database
+psycopg2-binary>=2.9.9         # PostgreSQL driver
+sqlalchemy>=2.0.0              # ORM for database operations
+
+# Vector DB
+chromadb>=0.5.0                # Vector store for RAG
+sentence-transformers>=3.0.0   # Embedding model
+
+# Frontend
+streamlit>=1.40.0              # Chat UI framework
+
+# Data Validation
+pydantic>=2.0.0                # Schema validation
+pydantic-settings>=2.0.0       # Environment variable management
+
+# Utilities
+python-dotenv>=1.0.0           # Load .env files
+
+# Testing
+pytest>=8.0.0                  # Test framework
+pytest-asyncio>=0.24.0         # Async test support
+
+# Development
+black>=24.0.0                  # Code formatting
+flake8>=7.0.0                  # Linting
