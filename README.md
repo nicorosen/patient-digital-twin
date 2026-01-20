@@ -6,69 +6,112 @@ An AI-powered healthcare assistant that demonstrates **agent-to-agent consultati
 
 Patient Digital Twin is a proof-of-concept application that showcases:
 
+- **Dual AI Agents**: Medical Assistant for clinical queries and Health Coach for education/motivation
 - **Conversational Health Data Management**: Patients can describe their health information naturally, and the system extracts structured data
 - **Agent-to-Agent Consultation**: The Medical Assistant can consult a Primary Care specialist on behalf of the patient
 - **Privacy-Preserving Architecture**: Specialist consultations use de-identified data (no names, birthdates, or identifiers)
 - **Clinical Translation**: Complex medical responses are translated to 6th-grade reading level
+- **Interactive Visualizations**: Health metrics dashboard, medication timeline, and severity charts
 
 ## Architecture
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           STREAMLIT UI                                   │
-│  ┌─────────────────┐  ┌─────────────────────────────────────────────┐  │
-│  │  Patient Select │  │              Chat Interface                  │  │
-│  │  Profile Sidebar│  │  Patient ←→ Medical Assistant               │  │
-│  └─────────────────┘  └─────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      MEDICAL ASSISTANT AGENT                             │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ Tools: get_profile | add_condition | add_medication | add_allergy  │ │
-│  │        search_patient_data (RAG) | consult_primary_care            │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────┘
-          │                              │                        │
-          ▼                              ▼                        ▼
-┌──────────────────┐         ┌──────────────────┐      ┌──────────────────┐
-│   PostgreSQL     │         │   Chroma         │      │  PRIMARY CARE    │
-│   (Structured)   │         │   (Embeddings)   │      │  SPECIALIST      │
-│                  │         │                  │      │                  │
-│ • Patient        │         │ • Condition docs │      │ De-identified    │
-│ • Condition      │◄───────►│ • Medication docs│      │ context only     │
-│ • Medication     │  sync   │ • Allergy docs   │      │                  │
-│ • Allergy        │         │                  │      │ Returns clinical │
-│ • Conversation   │         │                  │      │ assessment       │
-└──────────────────┘         └──────────────────┘      └──────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              STREAMLIT UI                                        │
+│  ┌──────────────────┐  ┌─────────────────────────────────────────────────────┐  │
+│  │  Patient Select  │  │             Main Content Area                        │  │
+│  │  Agent Selector  │  │  ┌───────────────────────────────────────────────┐  │  │
+│  │  Profile Sidebar │  │  │         Health Metrics Dashboard              │  │  │
+│  │  Audit Log       │  │  │ [Conditions] [Medications] [Allergies] [Last] │  │  │
+│  │                  │  │  └───────────────────────────────────────────────┘  │  │
+│  │  🩺 Clinical Mode│  │  ┌─────────────┬────────────────────────────────┐  │  │
+│  │  💪 Coaching Mode│  │  │ 💬 Chat Tab │ 📊 Visualizations Tab          │  │  │
+│  └──────────────────┘  │  └─────────────┴────────────────────────────────┘  │  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                         │
+              ┌──────────────────────────┴──────────────────────────┐
+              ▼                                                      ▼
+┌──────────────────────────────────┐          ┌──────────────────────────────────┐
+│     MEDICAL ASSISTANT AGENT      │          │       HEALTH COACH AGENT         │
+│  ┌────────────────────────────┐  │          │  ┌────────────────────────────┐  │
+│  │ Tools:                     │  │          │  │ Read-Only Tools:           │  │
+│  │ • get_patient_profile      │  │          │  │ • get_patient_profile      │  │
+│  │ • search_patient_data      │  │          │  │ • search_patient_data      │  │
+│  │ • add_condition            │  │          │  │                            │  │
+│  │ • add_medication           │  │          │  │ Purpose:                   │  │
+│  │ • add_allergy              │  │          │  │ • Health education         │  │
+│  │ • consult_primary_care     │  │          │  │ • Lifestyle guidance       │  │
+│  └────────────────────────────┘  │          │  │ • Motivation support       │  │
+└──────────────────────────────────┘          │  │ • Plain language           │  │
+          │                   │               │  └────────────────────────────┘  │
+          ▼                   ▼               └──────────────────────────────────┘
+┌──────────────────┐  ┌──────────────────┐
+│  PRIMARY CARE    │  │  TRANSLATION     │
+│  SPECIALIST      │  │  LAYER           │
+│                  │  │                  │
+│ De-identified    │  │ Clinical → Plain │
+│ context only     │  │ language (6th    │
+│                  │  │ grade reading)   │
+└──────────────────┘  └──────────────────┘
+              │                   │
+              └─────────┬─────────┘
+                        ▼
+         ┌──────────────────────────────┐
+         │  DATA LAYER                  │
+         │  ┌────────────┐ ┌─────────┐  │
+         │  │ PostgreSQL │ │ Chroma  │  │
+         │  │ (Records)  │ │ (RAG)   │  │
+         │  └────────────┘ └─────────┘  │
+         └──────────────────────────────┘
 ```
 
 ## Features
 
-### 1. Health Profile Management
+### 1. Dual AI Agents
+
+**Medical Assistant** (🩺 Clinical Mode)
+
+- Clinical questions and symptom assessment
+- Add conditions, medications, and allergies to health record
+- Consult with Primary Care specialist for complex questions
+
+**Health Coach** (💪 Coaching Mode)
+
+- Health education in plain language
+- Lifestyle and wellness guidance
+- Motivation and support for healthy behaviors
+- Read-only access (no data modification)
+
+### 2. Health Profile Management
 
 - View patient demographics, conditions, medications, and allergies
 - Add new health information through natural conversation
 - Automatic extraction and confirmation of structured data
 
-### 2. Semantic Search (RAG)
+### 3. Semantic Search (RAG)
 
 - Natural language queries over patient health data
 - "What medications am I taking?" returns relevant medication information
 - Powered by Chroma vector database and sentence-transformers
 
-### 3. Specialist Consultation
+### 4. Specialist Consultation
 
 - Medical Assistant can consult Primary Care specialist for clinical questions
 - **Privacy-preserving**: Only de-identified data is shared (age, gender, conditions - no names or DOB)
 - Full audit trail of what data was shared and specialist responses
 
-### 4. Clinical Translation
+### 5. Clinical Translation
 
 - Specialist responses are translated to plain language
 - Medical jargon replaced with simple terms
 - Appropriate reading level for patient understanding
+
+### 6. Interactive Dashboard & Visualizations
+
+- **Health Metrics Dashboard**: Quick view of conditions, medications, allergies count
+- **Medication Timeline**: Visual timeline of medication history (Plotly)
+- **Condition Severity Chart**: Donut chart showing severity distribution
+- **Consultation History**: Bar chart of consultations over time
 
 ## Technology Stack
 
@@ -80,6 +123,7 @@ Patient Digital Twin is a proof-of-concept application that showcases:
 | Vector Store    | Chroma                              | Semantic search        |
 | Embeddings      | sentence-transformers               | Document embeddings    |
 | Frontend        | Streamlit                           | Chat interface         |
+| Visualizations  | Plotly                              | Interactive charts     |
 | Validation      | Pydantic                            | Schema validation      |
 
 ## Installation
@@ -212,7 +256,8 @@ patient-digital-twin/
 │   │
 │   ├── agents/                   # AI agents
 │   │   ├── __init__.py
-│   │   ├── medical_assistant.py # Patient-facing agent
+│   │   ├── medical_assistant.py # Clinical agent (full tools)
+│   │   ├── health_coach.py      # Education agent (read-only)
 │   │   ├── primary_care.py      # Specialist agent
 │   │   ├── translation.py       # Clinical to plain language
 │   │   └── tools/               # Agent tools

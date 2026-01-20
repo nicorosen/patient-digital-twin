@@ -20,6 +20,9 @@ from src.agents.tools.patient_data import (
 # All tools available to the Medical Assistant
 ALL_TOOLS = PATIENT_DATA_TOOLS + CONSULTATION_TOOLS
 
+# Read-only tools for Health Coach (no data modification, no specialist consultation)
+HEALTH_COACH_TOOLS = [get_patient_profile, search_patient_data]
+
 __all__ = [
     # Patient data tools
     "get_patient_profile",
@@ -33,4 +36,6 @@ __all__ = [
     "CONSULTATION_TOOLS",
     # Combined
     "ALL_TOOLS",
+    # Health Coach tools (read-only)
+    "HEALTH_COACH_TOOLS",
 ]

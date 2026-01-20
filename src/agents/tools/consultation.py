@@ -14,6 +14,7 @@ from uuid import UUID
 from langchain_core.tools import tool
 
 from src.agents.primary_care import SpecialistResponse, get_primary_care_specialist
+from src.agents.translation import translate_specialist_response
 from src.database import get_db
 from src.database.repositories import (
     AllergyRepository,
@@ -233,9 +234,10 @@ def consult_primary_care(patient_id: str, clinical_question: str) -> str:
             )
         logger.debug("Audit log entry created")
 
-        formatted_response = format_specialist_response(response)
-        logger.info(f"Consultation completed, response_length={len(formatted_response)}")
-        return formatted_response
+        # Translate clinical response to patient-friendly language
+        translated_response = translate_specialist_response(response)
+        logger.info(f"Consultation completed, translated_length={len(translated_response)}")
+        return translated_response
 
     except ValueError as e:
         logger.error(f"Value error in consultation: {e}")

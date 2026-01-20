@@ -20,6 +20,7 @@ sentence-transformers>=3.0.0   # Embedding model
 
 # Frontend
 streamlit>=1.40.0              # Chat UI framework
+plotly>=5.18.0                 # Interactive charts and visualizations
 
 # Data Validation
 pydantic>=2.0.0                # Schema validation
