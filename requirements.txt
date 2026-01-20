@@ -2,10 +2,13 @@
 # Generated for 2-week MVP implementation
 
 # Core LLM
-anthropic>=0.40.0              # Claude API client
 langchain>=0.3.0               # Agent orchestration framework
-langchain-anthropic>=0.3.0     # LangChain + Claude integration
 langchain-chroma>=0.2.0        # LangChain + Chroma integration
+
+# LLM Providers (install based on which provider you use)
+langchain-anthropic>=0.3.0     # Anthropic Claude
+langchain-openai>=0.3.0        # OpenAI GPT-4, GPT-4o
+langchain-google-genai>=2.0.0  # Google Gemini
 
 # Database
 psycopg2-binary>=2.9.9         # PostgreSQL driver

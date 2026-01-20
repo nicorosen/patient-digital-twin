@@ -5,11 +5,10 @@ Translates specialist clinical responses into plain language
 that patients can understand (6th grade reading level).
 """
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agents.primary_care import SpecialistResponse
-from src.config import get_settings
+from src.llm import get_chat_model
 
 TRANSLATION_PROMPT = """You are a medical translator helping patients understand clinical information.
 
@@ -69,13 +68,7 @@ def translate_specialist_response(response: SpecialistResponse) -> str:
     Returns:
         Patient-friendly translation of the response.
     """
-    settings = get_settings()
-
-    llm = ChatAnthropic(
-        model=settings.model_name,
-        api_key=settings.anthropic_api_key,
-        max_tokens=2048,
-    )
+    llm = get_chat_model(max_tokens=2048)
 
     # Build the content to translate
     content_parts = [
@@ -138,13 +131,7 @@ async def atranslate_specialist_response(response: SpecialistResponse) -> str:
     Returns:
         Patient-friendly translation of the response.
     """
-    settings = get_settings()
-
-    llm = ChatAnthropic(
-        model=settings.model_name,
-        api_key=settings.anthropic_api_key,
-        max_tokens=2048,
-    )
+    llm = get_chat_model(max_tokens=2048)
 
     # Build the content to translate
     content_parts = [

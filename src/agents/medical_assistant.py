@@ -11,11 +11,10 @@ The patient-facing agent that:
 from typing import List, Optional
 from uuid import UUID
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from src.agents.tools import ALL_TOOLS
-from src.config import get_settings
+from src.llm import get_chat_model
 
 SYSTEM_PROMPT = """You are a Medical Assistant helping a patient manage their health information.
 You have access to the patient's health profile and can help them understand their conditions,
@@ -92,14 +91,9 @@ class MedicalAssistant:
             patient_id: UUID of the patient this assistant is helping.
         """
         self.patient_id = patient_id
-        self.settings = get_settings()
 
-        # Initialize LLM with tools
-        self.llm = ChatAnthropic(
-            model=self.settings.model_name,
-            api_key=self.settings.anthropic_api_key,
-            max_tokens=4096,
-        )
+        # Initialize LLM with tools using the provider factory
+        self.llm = get_chat_model()
 
         # Bind tools to LLM
         self.llm_with_tools = self.llm.bind_tools(ALL_TOOLS)

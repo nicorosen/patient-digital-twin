@@ -10,11 +10,10 @@ A stateless specialist agent that:
 
 from typing import List, Optional
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from src.config import get_settings
+from src.llm import get_chat_model
 from src.schemas import DeidentifiedContext
 
 
@@ -86,14 +85,8 @@ class PrimaryCareSpecialist:
 
     def __init__(self):
         """Initialize the specialist agent."""
-        self.settings = get_settings()
-
-        # Initialize LLM with structured output
-        self.llm = ChatAnthropic(
-            model=self.settings.model_name,
-            api_key=self.settings.anthropic_api_key,
-            max_tokens=4096,
-        )
+        # Initialize LLM using the provider factory
+        self.llm = get_chat_model()
 
         # Bind structured output
         self.structured_llm = self.llm.with_structured_output(SpecialistResponse)

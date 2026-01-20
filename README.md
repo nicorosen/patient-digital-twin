@@ -72,15 +72,15 @@ Patient Digital Twin is a proof-of-concept application that showcases:
 
 ## Technology Stack
 
-| Component       | Technology            | Purpose                |
-| --------------- | --------------------- | ---------------------- |
-| LLM             | Claude (Anthropic)    | Agent intelligence     |
-| Agent Framework | LangChain             | Tool orchestration     |
-| Database        | PostgreSQL            | Structured health data |
-| Vector Store    | Chroma                | Semantic search        |
-| Embeddings      | sentence-transformers | Document embeddings    |
-| Frontend        | Streamlit             | Chat interface         |
-| Validation      | Pydantic              | Schema validation      |
+| Component       | Technology                          | Purpose                |
+| --------------- | ----------------------------------- | ---------------------- |
+| LLM             | Claude / GPT-4 / Gemini (switchable)| Agent intelligence     |
+| Agent Framework | LangChain                           | Tool orchestration     |
+| Database        | PostgreSQL                          | Structured health data |
+| Vector Store    | Chroma                              | Semantic search        |
+| Embeddings      | sentence-transformers               | Document embeddings    |
+| Frontend        | Streamlit                           | Chat interface         |
+| Validation      | Pydantic                            | Schema validation      |
 
 ## Installation
 
@@ -118,17 +118,13 @@ Patient Digital Twin is a proof-of-concept application that showcases:
    cp .env.example .env
    ```
 
-   Edit `.env` and add your configuration:
+   Edit `.env` and add your API key (Google Gemini is the default):
 
    ```env
-   # Required
-   ANTHROPIC_API_KEY=sk-ant-...
-
-   # Optional (defaults shown)
-   DATABASE_URL=postgresql://localhost:5432/patient_twin
-   MODEL_NAME=claude-sonnet-4-20250514
-   CHROMA_PERSIST_DIR=./data/embeddings
-   EMBEDDING_MODEL=all-MiniLM-L6-v2
+   # Only the key for your provider is required
+   GOOGLE_API_KEY=AIza...        # For Google Gemini (default)
+   # ANTHROPIC_API_KEY=sk-ant-... # For Anthropic Claude
+   # OPENAI_API_KEY=sk-...        # For OpenAI GPT-4
    ```
 
 5. **Create PostgreSQL database**
@@ -142,9 +138,22 @@ Patient Digital Twin is a proof-of-concept application that showcases:
 ### Quick Start
 
 ```bash
-# Seed database with synthetic patients and start the app
+# Seed database and start with Google Gemini (default)
 python run.py --seed --index
+
+# Or use a different LLM provider
+python run.py --llm anthropic                    # Use Claude
+python run.py --llm openai --model gpt-4o        # Use GPT-4o
+python run.py --llm google --model gemini-2.0-flash  # Use Gemini Flash
 ```
+
+### LLM Providers
+
+| Provider    | Default Model              | Other Models                         |
+| ----------- | -------------------------- | ------------------------------------ |
+| `google`    | `gemini-2.5-pro`           | `gemini-2.0-flash`, `gemini-1.5-pro` |
+| `anthropic` | `claude-sonnet-4-20250514` | `claude-opus-4-20250514`             |
+| `openai`    | `gpt-4o`                   | `gpt-4-turbo`, `gpt-4o-mini`         |
 
 ### Step-by-Step
 

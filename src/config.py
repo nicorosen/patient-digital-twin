@@ -6,6 +6,8 @@ All settings are validated on application startup.
 """
 
 from functools import lru_cache
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,9 +23,17 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql://localhost:5432/patient_twin"
 
-    # LLM / Anthropic
-    anthropic_api_key: str
-    model_name: str = "claude-sonnet-4-20250514"
+    # LLM Provider Selection
+    llm_provider: str = "google"  # anthropic | openai | google
+
+    # API Keys (only the selected provider's key is required)
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+
+    # Model Configuration
+    model_name: str = "gemini-2.5-pro"
+    max_tokens: int = 4096
 
     # Vector DB (Chroma)
     chroma_persist_dir: str = "./data/embeddings"
