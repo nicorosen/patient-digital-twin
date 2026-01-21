@@ -407,7 +407,7 @@ class TestConversationRepository:
             metadata=metadata,
         )
 
-        assert message.metadata == metadata
+        assert message.message_metadata == metadata
 
     def test_get_messages(self, db_session, sample_patient):
         """Test getting conversation messages."""

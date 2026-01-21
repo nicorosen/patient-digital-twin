@@ -22,7 +22,7 @@ settings = get_settings()
 # Create engine
 engine = create_engine(
     settings.database_url,
-    echo=settings.is_development,  # Log SQL in development
+    echo=False,  # Disable SQL logging to reduce terminal noise
     pool_pre_ping=True,  # Check connection health
     pool_size=5,
     max_overflow=10,

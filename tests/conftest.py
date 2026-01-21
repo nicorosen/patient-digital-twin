@@ -9,7 +9,7 @@ Provides:
 
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 from typing import Generator
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -25,6 +25,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.base import Base
 from src.models.patient import Patient
 from src.models.clinical import Allergy, Condition, Medication
+from src.models.clinical_extended import (
+    FamilyHistory,
+    LabResult,
+    SocialHistory,
+    VitalSigns,
+)
 
 
 # =============================================================================
@@ -255,3 +261,103 @@ def mock_settings():
 def random_uuid():
     """Generate a random UUID for testing."""
     return uuid4()
+
+
+# =============================================================================
+# EXTENDED CLINICAL DATA FIXTURES
+# =============================================================================
+
+
+@pytest.fixture
+def sample_vital_signs_data(sample_patient) -> dict:
+    """Sample vital signs data."""
+    return {
+        "patient_id": sample_patient.id,
+        "recorded_at": datetime.now(),
+        "systolic_bp": 120,
+        "diastolic_bp": 80,
+        "heart_rate": 72,
+        "temperature": 36.8,
+        "weight_kg": 70.0,
+        "height_cm": 170.0,
+        "oxygen_saturation": 98,
+        "notes": "Routine check-up",
+    }
+
+
+@pytest.fixture
+def sample_vital_signs(db_session, sample_vital_signs_data) -> VitalSigns:
+    """Create sample vital signs in the database."""
+    vital_signs = VitalSigns(**sample_vital_signs_data)
+    db_session.add(vital_signs)
+    db_session.flush()
+    return vital_signs
+
+
+@pytest.fixture
+def sample_lab_result_data(sample_patient) -> dict:
+    """Sample lab result data."""
+    return {
+        "patient_id": sample_patient.id,
+        "test_name": "HbA1c",
+        "test_code": "4548-4",
+        "value": "6.8",
+        "value_numeric": 6.8,
+        "unit": "%",
+        "reference_range_low": 4.0,
+        "reference_range_high": 5.6,
+        "interpretation": "abnormal",
+        "result_date": datetime.now(),
+        "notes": "Slightly elevated",
+    }
+
+
+@pytest.fixture
+def sample_lab_result(db_session, sample_lab_result_data) -> LabResult:
+    """Create a sample lab result in the database."""
+    lab_result = LabResult(**sample_lab_result_data)
+    db_session.add(lab_result)
+    db_session.flush()
+    return lab_result
+
+
+@pytest.fixture
+def sample_family_history_data(sample_patient) -> dict:
+    """Sample family history data."""
+    return {
+        "patient_id": sample_patient.id,
+        "relation": "father",
+        "condition_name": "Type 2 Diabetes",
+        "onset_age": 55,
+        "notes": "Managed with diet",
+    }
+
+
+@pytest.fixture
+def sample_family_history(db_session, sample_family_history_data) -> FamilyHistory:
+    """Create sample family history in the database."""
+    family_history = FamilyHistory(**sample_family_history_data)
+    db_session.add(family_history)
+    db_session.flush()
+    return family_history
+
+
+@pytest.fixture
+def sample_social_history_data(sample_patient) -> dict:
+    """Sample social history data."""
+    return {
+        "patient_id": sample_patient.id,
+        "category": "smoking",
+        "status": "never",
+        "description": "Never smoked",
+        "notes": None,
+    }
+
+
+@pytest.fixture
+def sample_social_history(db_session, sample_social_history_data) -> SocialHistory:
+    """Create sample social history in the database."""
+    social_history = SocialHistory(**sample_social_history_data)
+    db_session.add(social_history)
+    db_session.flush()
+    return social_history

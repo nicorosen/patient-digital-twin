@@ -26,7 +26,12 @@ import plotly.graph_objects as go
 
 from src.agents import HealthCoach, MedicalAssistant
 from src.database import get_db
-from src.database.repositories import AuditLogRepository, PatientRepository
+from src.database.repositories import (
+    AuditLogRepository,
+    ConversationRepository,
+    ConversationSessionRepository,
+    PatientRepository,
+)
 from src.logging_config import get_logger, setup_logging
 
 # Initialize logging at app startup
@@ -77,6 +82,246 @@ def init_session_state():
         st.session_state.patient_name = None
     if "agent_type" not in st.session_state:
         st.session_state.agent_type = "Medical Assistant"
+    if "current_session_id" not in st.session_state:
+        st.session_state.current_session_id = None
+    if "session_list_refresh" not in st.session_state:
+        st.session_state.session_list_refresh = 0
+    if "editing_session_id" not in st.session_state:
+        st.session_state.editing_session_id = None
+    if "user_role" not in st.session_state:
+        st.session_state.user_role = "patient"  # Default to patient role
+
+
+def get_conversation_mode():
+    """Get conversation mode from agent type."""
+    return "coach" if st.session_state.agent_type == "Health Coach" else "clinical"
+
+
+def generate_session_title(first_message: str) -> str:
+    """Generate a session title from the first user message."""
+    # Truncate and clean the message for title
+    title = first_message.strip()
+    if len(title) > 50:
+        title = title[:47] + "..."
+    return title
+
+
+def load_session(session_id):
+    """Load a session's messages into session state."""
+    from uuid import UUID
+
+    with get_db() as db:
+        session = ConversationSessionRepository.get_by_id(db, UUID(session_id))
+        if not session:
+            logger.warning(f"Session {session_id} not found")
+            return
+
+        messages = ConversationRepository.get_messages_by_session(db, UUID(session_id))
+        st.session_state.messages = [
+            {"role": msg.role, "content": msg.content} for msg in messages
+        ]
+        st.session_state.current_session_id = session_id
+        logger.info(f"Loaded session {session_id} with {len(messages)} messages")
+
+
+def create_new_session():
+    """Create a new conversation session."""
+    from uuid import UUID
+
+    if not st.session_state.patient_id:
+        return None
+
+    mode = get_conversation_mode()
+    with get_db() as db:
+        session = ConversationSessionRepository.create(
+            db,
+            patient_id=UUID(st.session_state.patient_id),
+            mode=mode,
+        )
+        db.commit()
+        st.session_state.current_session_id = str(session.id)
+        logger.info(f"Created new session {session.id} for mode {mode}")
+        return str(session.id)
+
+
+def save_message_to_db(role: str, content: str):
+    """Save a message to the database."""
+    from uuid import UUID
+
+    if not st.session_state.patient_id:
+        return
+
+    # Create session if needed
+    if not st.session_state.current_session_id:
+        session_id = create_new_session()
+        if not session_id:
+            return
+
+        # Set title from first user message
+        if role == "user":
+            with get_db() as db:
+                ConversationSessionRepository.update_title(
+                    db, UUID(session_id), generate_session_title(content)
+                )
+                db.commit()
+
+    with get_db() as db:
+        message = ConversationRepository.add_message(
+            db,
+            patient_id=UUID(st.session_state.patient_id),
+            role=role,
+            content=content,
+            session_id=UUID(st.session_state.current_session_id) if st.session_state.current_session_id else None,
+        )
+        db.commit()
+
+        # Index clinical assistant messages for Health Coach RAG access
+        mode = get_conversation_mode()
+        if mode == "clinical" and role == "assistant":
+            from src.rag import get_retriever
+            retriever = get_retriever()
+            retriever.index_conversation_message(
+                patient_id=UUID(st.session_state.patient_id),
+                message_id=message.id,
+                content=content,
+                mode=mode,
+                role=role,
+            )
+            logger.debug(f"Indexed clinical message {message.id} for RAG")
+
+
+def start_new_chat():
+    """Start a new chat session."""
+    st.session_state.messages = []
+    st.session_state.current_session_id = None
+    st.session_state.session_list_refresh += 1
+
+
+def delete_session(session_id: str):
+    """Delete a conversation session."""
+    from uuid import UUID
+
+    with get_db() as db:
+        ConversationSessionRepository.delete(db, UUID(session_id))
+        db.commit()
+        logger.info(f"Deleted session {session_id}")
+
+    # If we deleted the current session, clear the chat
+    if st.session_state.current_session_id == session_id:
+        st.session_state.messages = []
+        st.session_state.current_session_id = None
+
+    st.session_state.session_list_refresh += 1
+
+
+def rename_session(session_id: str, new_title: str):
+    """Rename a conversation session."""
+    from uuid import UUID
+
+    if not new_title.strip():
+        return
+
+    with get_db() as db:
+        ConversationSessionRepository.update_title(db, UUID(session_id), new_title.strip())
+        db.commit()
+        logger.info(f"Renamed session {session_id} to '{new_title}'")
+
+    st.session_state.editing_session_id = None
+    st.session_state.session_list_refresh += 1
+
+
+def display_conversation_sidebar():
+    """Display conversation session sidebar section."""
+    from uuid import UUID
+
+    if not st.session_state.patient_id:
+        return
+
+    st.subheader("💬 Conversations")
+
+    # New Chat button
+    if st.button("➕ New Chat", key="new_chat_btn", use_container_width=True):
+        start_new_chat()
+        st.rerun()
+
+    mode = get_conversation_mode()
+    mode_label = "Clinical" if mode == "clinical" else "Coach"
+
+    with get_db() as db:
+        summaries = ConversationSessionRepository.get_session_summaries(
+            db,
+            patient_id=UUID(st.session_state.patient_id),
+            mode=mode,
+            limit=10,
+        )
+
+    if not summaries:
+        st.caption(f"No {mode_label} conversations yet")
+        return
+
+    st.caption(f"Recent {mode_label} conversations:")
+
+    for summary in summaries:
+        session_id_str = str(summary.id)
+        is_current = session_id_str == st.session_state.current_session_id
+        is_editing = st.session_state.editing_session_id == session_id_str
+
+        # Build button label
+        title = summary.title or summary.preview or "Untitled"
+        full_title = title  # Keep full title for editing
+        if len(title) > 25:
+            title = title[:22] + "..."
+
+        # Show date
+        date_str = summary.created_at.strftime("%m/%d")
+
+        # Check if we're editing this session
+        if is_editing:
+            # Show rename input
+            col_input, col_btns = st.columns([3, 1])
+            with col_input:
+                new_title = st.text_input(
+                    "Rename",
+                    value=full_title,
+                    key=f"rename_input_{session_id_str}",
+                    label_visibility="collapsed",
+                )
+            with col_btns:
+                if st.button("✓", key=f"save_rename_{session_id_str}", help="Save"):
+                    rename_session(session_id_str, new_title)
+                    st.rerun()
+            # Cancel button
+            if st.button("Cancel", key=f"cancel_rename_{session_id_str}", use_container_width=True):
+                st.session_state.editing_session_id = None
+                st.rerun()
+        else:
+            # Normal session display with action buttons
+            col_btn, col_edit, col_del = st.columns([6, 1, 1])
+
+            with col_btn:
+                btn_label = f"{'▶ ' if is_current else ''}{title}"
+                btn_help = f"{date_str} • {summary.message_count} messages"
+
+                if st.button(
+                    btn_label,
+                    key=f"session_{session_id_str}",
+                    use_container_width=True,
+                    type="primary" if is_current else "secondary",
+                    help=btn_help,
+                ):
+                    if not is_current:
+                        load_session(session_id_str)
+                        st.rerun()
+
+            with col_edit:
+                if st.button("✏️", key=f"edit_{session_id_str}", help="Rename"):
+                    st.session_state.editing_session_id = session_id_str
+                    st.rerun()
+
+            with col_del:
+                if st.button("🗑️", key=f"delete_{session_id_str}", help="Delete"):
+                    delete_session(session_id_str)
+                    st.rerun()
 
 
 def display_patient_profile(patient_id):
@@ -302,23 +547,45 @@ def display_consultation_history_chart(patient_id):
 
 
 def get_medical_assistant_prompts():
-    """Return suggested prompts for Medical Assistant."""
-    return [
-        ("📋 My conditions", "What conditions do I have?"),
-        ("💊 My medications", "What medications am I taking?"),
-        ("🩺 Symptom question", "I've been having some dizziness when I stand up. Should I be worried?"),
-        ("➕ Add information", "I was just diagnosed with high cholesterol last month"),
-    ]
+    """Return categorized prompts for Medical Assistant."""
+    return {
+        "📋 My Health Records": [
+            "What conditions do I have?",
+            "What medications am I taking?",
+            "What are my allergies?",
+        ],
+        "🩺 Symptoms & Concerns": [
+            "I've been having dizziness when I stand up. Should I be worried?",
+            "I'm experiencing chest tightness after exercise. What should I do?",
+            "I've noticed increased fatigue lately. Could it be related to my conditions?",
+        ],
+        "➕ Add Information": [
+            "I was just diagnosed with high cholesterol last month",
+            "I started taking a new vitamin D supplement",
+            "I developed a rash after eating shellfish",
+        ],
+    }
 
 
 def get_health_coach_prompts():
-    """Return suggested prompts for Health Coach."""
-    return [
-        ("🌿 Explain condition", "Can you explain what diabetes means and how it affects my body?"),
-        ("🥗 Lifestyle tips", "What lifestyle changes can help with my conditions?"),
-        ("💪 Stay motivated", "I'm finding it hard to stick to my medication routine. Can you help?"),
-        ("📚 About my meds", "Why do I take my medications and how do they help me?"),
-    ]
+    """Return categorized prompts for Health Coach."""
+    return {
+        "🌿 Understand My Health": [
+            "Can you explain what my conditions mean in simple terms?",
+            "How do my medications work and why are they important?",
+            "What should I know about managing my health day-to-day?",
+        ],
+        "🥗 Lifestyle & Wellness": [
+            "What diet changes would help with my conditions?",
+            "What exercises are safe and beneficial for me?",
+            "How can I improve my sleep and manage stress?",
+        ],
+        "💪 Stay Motivated": [
+            "I'm struggling to stick to my medication routine. Any tips?",
+            "How can I stay motivated with my health goals?",
+            "What small changes can make a big difference?",
+        ],
+    }
 
 
 def get_suggested_prompts():
@@ -363,6 +630,7 @@ def main():
                 st.session_state.patient_id = new_patient_id
                 st.session_state.patient_name = selected_name
                 st.session_state.messages = []
+                st.session_state.current_session_id = None
                 st.rerun()
 
         st.markdown("---")
@@ -383,6 +651,7 @@ def main():
             logger.info(f"Agent changed: {selected_agent}")
             st.session_state.agent_type = selected_agent
             st.session_state.messages = []
+            st.session_state.current_session_id = None
             st.rerun()
 
         # Agent personality badge
@@ -390,6 +659,39 @@ def main():
             st.info("🩺 **Clinical Mode**\n\nAsk symptoms, add health info, consult specialists")
         else:
             st.success("💪 **Coaching Mode**\n\nHealth education, lifestyle tips, motivation")
+
+        st.markdown("---")
+
+        # User Role Toggle (Demo Mode)
+        st.subheader("👤 User Role")
+        role_options = ["patient", "doctor"]
+        role_labels = {"patient": "🧑 Patient", "doctor": "👨‍⚕️ Doctor"}
+        selected_role = st.radio(
+            "Role",
+            options=role_options,
+            format_func=lambda x: role_labels[x],
+            index=role_options.index(st.session_state.user_role),
+            key="role_selector",
+            help="**Patient**: Read-only access to your health records\n\n"
+                 "**Doctor**: Full access - can update and delete records",
+            horizontal=True,
+        )
+
+        if selected_role != st.session_state.user_role:
+            logger.info(f"Role changed: {selected_role}")
+            st.session_state.user_role = selected_role
+            st.rerun()
+
+        # Role badge with permissions info
+        if st.session_state.user_role == "doctor":
+            st.success("👨‍⚕️ **Doctor Mode**\n\n✓ View records\n✓ Add new records\n✓ Update records\n✓ Delete records")
+        else:
+            st.warning("🧑 **Patient Mode**\n\n✓ View records\n✓ Add new records\n✗ Update records\n✗ Delete records")
+
+        st.markdown("---")
+
+        # Conversation history sidebar
+        display_conversation_sidebar()
 
         st.markdown("---")
 
@@ -431,14 +733,28 @@ def main():
         display_medication_timeline(st.session_state.patient_id)
 
     with tab_chat:
-        # Suggested prompts
-        st.caption("Try asking:")
-        cols = st.columns(4)
-        for i, (label, prompt) in enumerate(get_suggested_prompts()):
-            with cols[i]:
-                if st.button(label, key=f"prompt_{i}", use_container_width=True):
-                    st.session_state.messages.append({"role": "user", "content": prompt})
-                    st.rerun()
+        # Quick action prompts by category - send directly when clicked
+        st.caption("Quick actions (click to send):")
+        prompt_categories = get_suggested_prompts()
+
+        # Display categories in columns
+        cols = st.columns(len(prompt_categories))
+        for col_idx, (category, prompts) in enumerate(prompt_categories.items()):
+            with cols[col_idx]:
+                st.markdown(f"**{category}**")
+                for prompt_idx, prompt in enumerate(prompts):
+                    # Show truncated prompt as button text
+                    display_text = prompt if len(prompt) <= 50 else prompt[:47] + "..."
+                    if st.button(
+                        display_text,
+                        key=f"prompt_{col_idx}_{prompt_idx}",
+                        use_container_width=True,
+                        help=prompt,  # Full text on hover
+                    ):
+                        logger.info(f"Quick action clicked: {prompt[:50]}")
+                        st.session_state.messages.append({"role": "user", "content": prompt})
+                        save_message_to_db("user", prompt)
+                        st.rerun()
 
         st.markdown("---")
 
@@ -455,9 +771,10 @@ def main():
 
     # Chat input
     if prompt := st.chat_input("How can I help you today?"):
-        # Add user message
+        # Regular chat input (no pending prompt)
         logger.info(f"User submitted chat message: length={len(prompt)}")
         st.session_state.messages.append({"role": "user", "content": prompt})
+        save_message_to_db("user", prompt)
         with st.chat_message("user"):
             st.markdown(prompt)
         needs_response = True
@@ -479,17 +796,19 @@ def main():
                     if st.session_state.agent_type == "Health Coach":
                         agent = HealthCoach(patient_uuid)
                     else:
-                        agent = MedicalAssistant(patient_uuid)
+                        agent = MedicalAssistant(patient_uuid, user_role=st.session_state.user_role)
 
                     response = agent.chat(user_prompt, st.session_state.messages[:-1])
                     st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
+                    save_message_to_db("assistant", response)
                     logger.info(f"Agent response generated: agent={st.session_state.agent_type}, length={len(response)}")
                 except Exception as e:
                     logger.error(f"Error generating response: {e}", exc_info=True)
                     error_msg = f"Sorry, I encountered an error: {str(e)}"
                     st.error(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    save_message_to_db("assistant", error_msg)
 
 
 if __name__ == "__main__":

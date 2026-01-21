@@ -345,6 +345,11 @@ class PatientProfile(BaseSchema):
     conditions: list[ConditionSchema] = Field(default_factory=list)
     medications: list[MedicationSchema] = Field(default_factory=list)
     allergies: list[AllergySchema] = Field(default_factory=list)
+    # Extended clinical data (using Any for backwards compatibility)
+    vital_signs: list = Field(default_factory=list)
+    lab_results: list = Field(default_factory=list)
+    family_history: list = Field(default_factory=list)
+    social_history: list = Field(default_factory=list)
 
     @property
     def active_conditions(self) -> list[ConditionSchema]:
@@ -355,6 +360,13 @@ class PatientProfile(BaseSchema):
     def active_medications(self) -> list[MedicationSchema]:
         """Get only active medications."""
         return [m for m in self.medications if m.status == MedicationStatus.ACTIVE]
+
+    @property
+    def latest_vitals(self):
+        """Get the most recent vital signs."""
+        if self.vital_signs:
+            return sorted(self.vital_signs, key=lambda v: v.recorded_at, reverse=True)[0]
+        return None
 
 
 class DeidentifiedContext(BaseSchema):

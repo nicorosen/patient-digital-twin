@@ -121,6 +121,10 @@ class TestGetPatientProfileTool:
         mock_profile.conditions = []
         mock_profile.medications = []
         mock_profile.allergies = []
+        mock_profile.vital_signs = []
+        mock_profile.lab_results = []
+        mock_profile.family_history = []
+        mock_profile.social_history = []
 
         mock_repo.get_profile.return_value = mock_profile
 

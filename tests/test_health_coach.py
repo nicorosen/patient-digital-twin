@@ -56,10 +56,13 @@ class TestHealthCoachToolBinding:
         assert "consult_primary_care" not in tool_names
 
     def test_health_coach_tools_count(self):
-        """Test that HEALTH_COACH_TOOLS has exactly 2 tools."""
+        """Test that HEALTH_COACH_TOOLS has the expected number of tools."""
         from src.agents.tools import HEALTH_COACH_TOOLS
 
-        assert len(HEALTH_COACH_TOOLS) == 2
+        # Health Coach has: get_patient_profile, search_patient_data,
+        # get_conditions, get_medications, get_allergies, get_vital_signs,
+        # get_lab_results, get_family_history, get_social_history, search_clinical_history
+        assert len(HEALTH_COACH_TOOLS) == 10
 
 
 # =============================================================================
@@ -76,15 +79,23 @@ class TestAgentToolDifferences:
 
         assert len(ALL_TOOLS) > len(HEALTH_COACH_TOOLS)
 
-    def test_health_coach_tools_subset_of_all_tools(self):
-        """Test that Health Coach tools are a subset of all tools."""
+    def test_health_coach_tools_are_read_only_subset(self):
+        """Test that Health Coach tools are read-only tools from ALL_TOOLS plus clinical history search."""
         from src.agents.tools import ALL_TOOLS, HEALTH_COACH_TOOLS
 
         all_tool_names = {tool.name for tool in ALL_TOOLS}
         health_coach_tool_names = {tool.name for tool in HEALTH_COACH_TOOLS}
 
-        # All health coach tools should be in ALL_TOOLS
-        assert health_coach_tool_names.issubset(all_tool_names)
+        # Health Coach has search_clinical_history which is unique to it (for cross-mode context)
+        # All other health coach tools should be in ALL_TOOLS
+        unique_to_coach = health_coach_tool_names - all_tool_names
+        assert unique_to_coach == {"search_clinical_history"}
+
+        # The rest should be in ALL_TOOLS
+        shared_tools = health_coach_tool_names & all_tool_names
+        # get_patient_profile, search_patient_data, get_conditions, get_medications,
+        # get_allergies, get_vital_signs, get_lab_results, get_family_history, get_social_history
+        assert len(shared_tools) == 9
 
     def test_medical_assistant_has_write_tools(self):
         """Test that Medical Assistant (ALL_TOOLS) has write tools."""
@@ -254,4 +265,7 @@ class TestHealthCoachExports:
         from src.agents import HEALTH_COACH_TOOLS
 
         assert HEALTH_COACH_TOOLS is not None
-        assert len(HEALTH_COACH_TOOLS) == 2
+        # Health Coach has 10 tools: get_patient_profile, search_patient_data,
+        # get_conditions, get_medications, get_allergies, get_vital_signs,
+        # get_lab_results, get_family_history, get_social_history, search_clinical_history
+        assert len(HEALTH_COACH_TOOLS) == 10

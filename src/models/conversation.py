@@ -2,15 +2,16 @@
 Conversation and audit log models.
 
 Stores:
+- Conversation sessions (groups of messages)
 - Conversation history between patients and the Medical Assistant
 - Audit logs of specialist consultations for transparency
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +21,59 @@ if TYPE_CHECKING:
     from src.models.patient import Patient
 
 
+class ConversationSession(Base, UUIDMixin, TimestampMixin):
+    """
+    A conversation session grouping related messages.
+
+    Sessions allow users to:
+    - Continue previous conversations
+    - View conversation history by mode
+    - Start new conversations
+
+    Attributes:
+        id: Unique identifier (UUID)
+        patient_id: Reference to the patient
+        mode: Type of conversation ('clinical' for Medical Assistant, 'coach' for Health Coach)
+        title: Auto-generated or custom title for the session
+        is_active: Whether this is the current active session for this patient/mode
+    """
+
+    __tablename__ = "conversation_sessions"
+
+    patient_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="clinical",
+    )
+    title: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
+    # Relationship to messages
+    messages: Mapped[List["ConversationMessage"]] = relationship(
+        "ConversationMessage",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
+    )
+
+    def __repr__(self) -> str:
+        title_preview = self.title[:30] if self.title else "Untitled"
+        return f"<ConversationSession(mode='{self.mode}', title='{title_preview}')>"
+
+
 class ConversationMessage(Base, UUIDMixin, TimestampMixin):
     """
     Individual message in a conversation.
@@ -27,6 +81,7 @@ class ConversationMessage(Base, UUIDMixin, TimestampMixin):
     Attributes:
         id: Unique identifier (UUID)
         patient_id: Reference to the patient this conversation is with
+        session_id: Reference to the conversation session (optional for migration)
         role: Who sent the message ('user' or 'assistant')
         content: The message content
         message_metadata: Optional metadata (tool calls, etc.)
@@ -40,12 +95,24 @@ class ConversationMessage(Base, UUIDMixin, TimestampMixin):
         nullable=False,
         index=True,
     )
+    session_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=True,  # Nullable to support existing messages without sessions
+        index=True,
+    )
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Relationship back to session
+    session: Mapped[Optional["ConversationSession"]] = relationship(
+        "ConversationSession",
+        back_populates="messages",
+    )
 
     def __repr__(self) -> str:
         preview = self.content[:50] + "..." if len(self.content) > 50 else self.content

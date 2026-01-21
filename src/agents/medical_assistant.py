@@ -151,15 +151,18 @@ Only add to their record after confirmation.
 class MedicalAssistant:
     """Medical Assistant agent for patient interaction."""
 
-    def __init__(self, patient_id: UUID):
+    def __init__(self, patient_id: UUID, user_role: str = "patient"):
         """
         Initialize the Medical Assistant for a specific patient.
 
         Args:
             patient_id: UUID of the patient this assistant is helping.
+            user_role: Role of the user ('patient' or 'doctor'). Doctors can
+                      update and delete records, patients cannot.
         """
-        logger.info(f"Initializing MedicalAssistant for patient_id={patient_id}")
+        logger.info(f"Initializing MedicalAssistant for patient_id={patient_id}, role={user_role}")
         self.patient_id = patient_id
+        self.user_role = user_role
 
         # Initialize LLM with tools using the provider factory
         self.llm = get_chat_model()
@@ -183,8 +186,40 @@ class MedicalAssistant:
         Returns:
             List of LangChain messages.
         """
+        # Build role-specific permissions prompt
+        if self.user_role == "doctor":
+            role_prompt = """
+## User Role: DOCTOR
+
+You are assisting a doctor who has full access to this patient's records.
+As a doctor, you CAN:
+- View all patient data
+- Add new conditions, medications, allergies, vital signs, lab results, etc.
+- Update existing records (use update_* tools)
+- Delete records that were added in error (use delete_* tools)
+
+When the doctor asks to update or delete a record, you should help them do so.
+"""
+        else:
+            role_prompt = """
+## User Role: PATIENT
+
+You are assisting the patient directly. Patients have limited permissions.
+As a patient, you CAN:
+- View your own health data
+- Add new information (conditions, medications, allergies, symptoms)
+
+As a patient, you CANNOT:
+- Update existing records (only a doctor can do this)
+- Delete records (only a doctor can do this)
+
+If the patient asks to update or delete a record, politely explain that only
+their doctor can make those changes, and suggest they discuss it at their
+next appointment.
+"""
+
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT),
+            SystemMessage(content=SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT + "\n\n" + role_prompt),
             SystemMessage(content=f"Current patient_id: {self.patient_id}"),
         ]
 

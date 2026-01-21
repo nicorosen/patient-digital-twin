@@ -10,14 +10,18 @@ Usage:
     python -m src.database.seed
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from src.database.connection import create_tables, get_db
 from src.database.repositories import (
     AllergyRepository,
     ConditionRepository,
+    FamilyHistoryRepository,
+    LabResultRepository,
     MedicationRepository,
     PatientRepository,
+    SocialHistoryRepository,
+    VitalSignsRepository,
 )
 from src.schemas import (
     AllergyCategory,
@@ -25,11 +29,19 @@ from src.schemas import (
     AllergyCreate,
     ClinicalStatus,
     ConditionCreate,
+    FamilyHistoryCreate,
+    FamilyRelationship,
     Gender,
+    LabInterpretation,
+    LabResultCreate,
     MedicationCreate,
     MedicationStatus,
     PatientCreate,
     Severity,
+    SocialHistoryCategory,
+    SocialHistoryCreate,
+    SocialHistoryStatus,
+    VitalSignsCreate,
 )
 
 
@@ -102,6 +114,134 @@ def seed_maria_garcia(db) -> None:
             status=MedicationStatus.ACTIVE,
             start_date=date(2020, 3, 1),
             reason="Blood pressure control",
+        ),
+    )
+
+    # Add vital signs
+    VitalSignsRepository.create(
+        db,
+        VitalSignsCreate(
+            patient_id=patient_id,
+            recorded_at=datetime.now() - timedelta(days=7),
+            systolic_bp=128,
+            diastolic_bp=82,
+            heart_rate=76,
+            temperature=36.8,
+            weight_kg=68.5,
+            height_cm=162,
+            oxygen_saturation=98,
+            notes="Routine check-up",
+        ),
+    )
+    VitalSignsRepository.create(
+        db,
+        VitalSignsCreate(
+            patient_id=patient_id,
+            recorded_at=datetime.now() - timedelta(days=90),
+            systolic_bp=135,
+            diastolic_bp=88,
+            heart_rate=80,
+            weight_kg=70.2,
+            height_cm=162,
+            oxygen_saturation=97,
+        ),
+    )
+
+    # Add lab results
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="HbA1c",
+            test_code="4548-4",
+            value="6.8",
+            value_numeric=6.8,
+            unit="%",
+            reference_range_low=4.0,
+            reference_range_high=5.6,
+            interpretation=LabInterpretation.ABNORMAL,
+            result_date=datetime.now() - timedelta(days=30),
+            notes="Slightly elevated, continue current management",
+        ),
+    )
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="Fasting Blood Glucose",
+            test_code="1558-6",
+            value="118",
+            value_numeric=118,
+            unit="mg/dL",
+            reference_range_low=70,
+            reference_range_high=100,
+            interpretation=LabInterpretation.ABNORMAL,
+            result_date=datetime.now() - timedelta(days=30),
+        ),
+    )
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="Total Cholesterol",
+            test_code="2093-3",
+            value="195",
+            value_numeric=195,
+            unit="mg/dL",
+            reference_range_low=0,
+            reference_range_high=200,
+            interpretation=LabInterpretation.NORMAL,
+            result_date=datetime.now() - timedelta(days=30),
+        ),
+    )
+
+    # Add family history
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.FATHER,
+            condition_name="Type 2 Diabetes",
+            onset_age=55,
+            notes="Managed with diet and oral medications",
+        ),
+    )
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.MOTHER,
+            condition_name="Hypertension",
+            onset_age=50,
+        ),
+    )
+
+    # Add social history
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.SMOKING,
+            status=SocialHistoryStatus.NEVER,
+            description="Never smoked",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.ALCOHOL,
+            status=SocialHistoryStatus.OCCASIONAL,
+            description="Social drinker, 1-2 glasses of wine per week",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.EXERCISE,
+            status=SocialHistoryStatus.CURRENT,
+            description="Walks 30 minutes daily, yoga twice weekly",
         ),
     )
 
@@ -194,6 +334,122 @@ def seed_james_thompson(db) -> None:
         ),
     )
 
+    # Add vital signs
+    VitalSignsRepository.create(
+        db,
+        VitalSignsCreate(
+            patient_id=patient_id,
+            recorded_at=datetime.now() - timedelta(days=14),
+            systolic_bp=142,
+            diastolic_bp=88,
+            heart_rate=68,
+            temperature=36.6,
+            weight_kg=82.3,
+            height_cm=178,
+            oxygen_saturation=96,
+            notes="Follow-up for cardiac monitoring",
+        ),
+    )
+
+    # Add lab results
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="LDL Cholesterol",
+            test_code="2089-1",
+            value="78",
+            value_numeric=78,
+            unit="mg/dL",
+            reference_range_low=0,
+            reference_range_high=100,
+            interpretation=LabInterpretation.NORMAL,
+            result_date=datetime.now() - timedelta(days=60),
+            notes="Well controlled on statin therapy",
+        ),
+    )
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="HDL Cholesterol",
+            test_code="2085-9",
+            value="52",
+            value_numeric=52,
+            unit="mg/dL",
+            reference_range_low=40,
+            reference_range_high=60,
+            interpretation=LabInterpretation.NORMAL,
+            result_date=datetime.now() - timedelta(days=60),
+        ),
+    )
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="Triglycerides",
+            test_code="2571-8",
+            value="145",
+            value_numeric=145,
+            unit="mg/dL",
+            reference_range_low=0,
+            reference_range_high=150,
+            interpretation=LabInterpretation.NORMAL,
+            result_date=datetime.now() - timedelta(days=60),
+        ),
+    )
+
+    # Add family history
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.FATHER,
+            condition_name="Myocardial Infarction",
+            onset_age=58,
+            notes="Fatal heart attack",
+        ),
+    )
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.SIBLING,
+            condition_name="Coronary Artery Disease",
+            onset_age=55,
+            notes="Brother had bypass surgery",
+        ),
+    )
+
+    # Add social history
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.SMOKING,
+            status=SocialHistoryStatus.FORMER,
+            description="Quit 15 years ago, previously 1 pack/day for 20 years",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.ALCOHOL,
+            status=SocialHistoryStatus.NEVER,
+            description="Non-drinker",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.EXERCISE,
+            status=SocialHistoryStatus.CURRENT,
+            description="Cardiac rehab program, walking 45 min 5x/week",
+        ),
+    )
+
     print(f"  Created patient: {patient.full_name} (ID: {patient.id})")
 
 
@@ -282,6 +538,114 @@ def seed_sarah_chen(db) -> None:
         ),
     )
 
+    # Add vital signs
+    VitalSignsRepository.create(
+        db,
+        VitalSignsCreate(
+            patient_id=patient_id,
+            recorded_at=datetime.now() - timedelta(days=3),
+            systolic_bp=112,
+            diastolic_bp=72,
+            heart_rate=74,
+            temperature=36.5,
+            weight_kg=58.2,
+            height_cm=165,
+            oxygen_saturation=99,
+        ),
+    )
+
+    # Add lab results (anxiety-related)
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="TSH",
+            test_code="3016-3",
+            value="2.1",
+            value_numeric=2.1,
+            unit="mIU/L",
+            reference_range_low=0.4,
+            reference_range_high=4.0,
+            interpretation=LabInterpretation.NORMAL,
+            result_date=datetime.now() - timedelta(days=45),
+            notes="Thyroid function normal, not contributing to anxiety",
+        ),
+    )
+    LabResultRepository.create(
+        db,
+        LabResultCreate(
+            patient_id=patient_id,
+            test_name="Vitamin D",
+            test_code="1989-3",
+            value="28",
+            value_numeric=28,
+            unit="ng/mL",
+            reference_range_low=30,
+            reference_range_high=100,
+            interpretation=LabInterpretation.ABNORMAL,
+            result_date=datetime.now() - timedelta(days=45),
+            notes="Slightly low, recommend supplementation",
+        ),
+    )
+
+    # Add family history
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.MOTHER,
+            condition_name="Generalized Anxiety Disorder",
+            onset_age=35,
+        ),
+    )
+    FamilyHistoryRepository.create(
+        db,
+        FamilyHistoryCreate(
+            patient_id=patient_id,
+            relation=FamilyRelationship.MATERNAL_GRANDMOTHER,
+            condition_name="Asthma",
+            onset_age=40,
+        ),
+    )
+
+    # Add social history
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.SMOKING,
+            status=SocialHistoryStatus.NEVER,
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.ALCOHOL,
+            status=SocialHistoryStatus.OCCASIONAL,
+            description="Occasional social drinking",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.EXERCISE,
+            status=SocialHistoryStatus.CURRENT,
+            description="Running 3x/week, yoga for anxiety management",
+        ),
+    )
+    SocialHistoryRepository.create(
+        db,
+        SocialHistoryCreate(
+            patient_id=patient_id,
+            category=SocialHistoryCategory.STRESS,
+            status=SocialHistoryStatus.CURRENT,
+            description="High-stress job in tech industry",
+            notes="Working on stress management techniques with therapist",
+        ),
+    )
+
     print(f"  Created patient: {patient.full_name} (ID: {patient.id})")
 
 
@@ -332,9 +696,15 @@ def seed_database() -> None:
             conditions = len(p.conditions)
             medications = len(p.medications)
             allergies = len(p.allergies)
+            vital_signs = len(p.vital_signs)
+            lab_results = len(p.lab_results)
+            family_history = len(p.family_history)
+            social_history = len(p.social_history)
             print(
                 f"  - {p.full_name} ({p.age}y {p.gender}): "
-                f"{conditions} conditions, {medications} medications, {allergies} allergies"
+                f"{conditions} conditions, {medications} meds, {allergies} allergies, "
+                f"{vital_signs} vitals, {lab_results} labs, "
+                f"{family_history} family hx, {social_history} social hx"
             )
         print()
 

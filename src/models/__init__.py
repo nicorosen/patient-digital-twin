@@ -9,7 +9,17 @@ Contains SQLAlchemy ORM models for:
 
 from src.models.base import Base, TimestampMixin, UUIDMixin
 from src.models.clinical import Allergy, Condition, Medication
-from src.models.conversation import ConsultationAuditLog, ConversationMessage
+from src.models.clinical_extended import (
+    FamilyHistory,
+    LabResult,
+    SocialHistory,
+    VitalSigns,
+)
+from src.models.conversation import (
+    ConsultationAuditLog,
+    ConversationMessage,
+    ConversationSession,
+)
 from src.models.patient import Patient
 
 __all__ = [
@@ -23,7 +33,13 @@ __all__ = [
     "Condition",
     "Medication",
     "Allergy",
+    # Clinical Extended
+    "VitalSigns",
+    "LabResult",
+    "FamilyHistory",
+    "SocialHistory",
     # Conversation
+    "ConversationSession",
     "ConversationMessage",
     "ConsultationAuditLog",
 ]

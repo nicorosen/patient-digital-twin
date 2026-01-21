@@ -14,6 +14,12 @@ from src.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from src.models.clinical import Allergy, Condition, Medication
+    from src.models.clinical_extended import (
+        FamilyHistory,
+        LabResult,
+        SocialHistory,
+        VitalSigns,
+    )
 
 
 class Patient(Base, UUIDMixin, TimestampMixin):
@@ -52,6 +58,30 @@ class Patient(Base, UUIDMixin, TimestampMixin):
     )
     allergies: Mapped[List["Allergy"]] = relationship(
         "Allergy",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    vital_signs: Mapped[List["VitalSigns"]] = relationship(
+        "VitalSigns",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    lab_results: Mapped[List["LabResult"]] = relationship(
+        "LabResult",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    family_history: Mapped[List["FamilyHistory"]] = relationship(
+        "FamilyHistory",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    social_history: Mapped[List["SocialHistory"]] = relationship(
+        "SocialHistory",
         back_populates="patient",
         cascade="all, delete-orphan",
         lazy="selectin",

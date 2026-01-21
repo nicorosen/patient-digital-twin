@@ -16,8 +16,14 @@ from src.database import get_db
 from src.database.repositories import (
     AllergyRepository,
     ConditionRepository,
+    ConversationRepository,
+    ConversationSessionRepository,
+    FamilyHistoryRepository,
+    LabResultRepository,
     MedicationRepository,
     PatientRepository,
+    SocialHistoryRepository,
+    VitalSignsRepository,
 )
 from src.logging_config import get_logger
 from src.rag.vectorstore import get_vectorstore
@@ -77,10 +83,49 @@ class PatientRetriever:
             doc_types.append("allergy")
             item_ids.append(allergy.id)
 
+        # Index vital signs
+        vital_signs = VitalSignsRepository.get_by_patient(db, patient_id, limit=20)
+        for vs in vital_signs:
+            doc_ids.append(f"vital_signs_{vs.id}")
+            contents.append(vs.to_document())
+            patient_ids.append(patient_id)
+            doc_types.append("vital_signs")
+            item_ids.append(vs.id)
+
+        # Index lab results
+        lab_results = LabResultRepository.get_by_patient(db, patient_id, limit=50)
+        for lr in lab_results:
+            doc_ids.append(f"lab_result_{lr.id}")
+            contents.append(lr.to_document())
+            patient_ids.append(patient_id)
+            doc_types.append("lab_result")
+            item_ids.append(lr.id)
+
+        # Index family history
+        family_history = FamilyHistoryRepository.get_by_patient(db, patient_id)
+        for fh in family_history:
+            doc_ids.append(f"family_history_{fh.id}")
+            contents.append(fh.to_document())
+            patient_ids.append(patient_id)
+            doc_types.append("family_history")
+            item_ids.append(fh.id)
+
+        # Index social history
+        social_history = SocialHistoryRepository.get_by_patient(db, patient_id)
+        for sh in social_history:
+            doc_ids.append(f"social_history_{sh.id}")
+            contents.append(sh.to_document())
+            patient_ids.append(patient_id)
+            doc_types.append("social_history")
+            item_ids.append(sh.id)
+
         # Batch add to vector store
         if contents:
             logger.info(f"  Indexing {len(contents)} documents: "
-                       f"{len(conditions)} conditions, {len(medications)} medications, {len(allergies)} allergies")
+                       f"{len(conditions)} conditions, {len(medications)} medications, "
+                       f"{len(allergies)} allergies, {len(vital_signs)} vital signs, "
+                       f"{len(lab_results)} lab results, {len(family_history)} family history, "
+                       f"{len(social_history)} social history")
             for i, (doc_id, content) in enumerate(zip(doc_ids, contents)):
                 logger.debug(f"    [{i}] {doc_id}: {content[:80]}...")
             self._vectorstore.add_documents(
@@ -250,6 +295,32 @@ class PatientRetriever:
             item_id=allergy_id,
         )
 
+    def add_document(
+        self,
+        patient_id: UUID,
+        doc_id: UUID,
+        content: str,
+        doc_type: str,
+    ) -> None:
+        """
+        Add a new document to the index.
+
+        Generic method for adding any document type.
+
+        Args:
+            patient_id: UUID of the patient.
+            doc_id: UUID of the document/item.
+            content: Document content.
+            doc_type: Type of document (vital_signs, lab_result, family_history, social_history).
+        """
+        self._vectorstore.add_document(
+            doc_id=f"{doc_type}_{doc_id}",
+            content=content,
+            patient_id=patient_id,
+            doc_type=doc_type,
+            item_id=doc_id,
+        )
+
     def remove_document(self, doc_type: str, item_id: UUID) -> None:
         """
         Remove a document from the index.
@@ -268,6 +339,100 @@ class PatientRetriever:
             patient_id: UUID of the patient.
         """
         self._vectorstore.delete_patient_documents(patient_id)
+
+    def index_conversation_message(
+        self,
+        patient_id: UUID,
+        message_id: UUID,
+        content: str,
+        mode: str,
+        role: str,
+    ) -> None:
+        """
+        Index a clinical conversation message for cross-mode access.
+
+        Only indexes clinical assistant responses (not user messages or coach messages)
+        so the Health Coach can access clinical context.
+
+        Args:
+            patient_id: UUID of the patient.
+            message_id: UUID of the message.
+            content: Message content.
+            mode: Conversation mode ('clinical' or 'coach').
+            role: Message role ('user' or 'assistant').
+        """
+        # Only index clinical assistant messages for cross-mode access
+        if mode == "clinical" and role == "assistant":
+            self._vectorstore.add_document(
+                doc_id=f"conversation_{message_id}",
+                content=f"[Clinical Consultation] {content}",
+                patient_id=patient_id,
+                doc_type="conversation",
+                item_id=message_id,
+            )
+            logger.debug(f"Indexed clinical conversation message {message_id}")
+
+    def search_clinical_conversations(
+        self,
+        query: str,
+        patient_id: UUID,
+        n_results: int = 3,
+    ) -> List[dict]:
+        """
+        Search past clinical conversations for context.
+
+        Used by the Health Coach to access clinical context without
+        needing direct access to the clinical agent.
+
+        Args:
+            query: Natural language search query.
+            patient_id: UUID of the patient.
+            n_results: Maximum number of results.
+
+        Returns:
+            List of matching conversation documents.
+        """
+        logger.info(f"Searching clinical conversations: query='{query}', patient_id={patient_id}")
+        results = self._vectorstore.search(
+            query=query,
+            patient_id=patient_id,
+            n_results=n_results,
+            doc_type="conversation",
+        )
+        logger.info(f"Found {len(results)} clinical conversation results")
+        return results
+
+    def get_clinical_context(
+        self,
+        query: str,
+        patient_id: UUID,
+        n_results: int = 3,
+    ) -> str:
+        """
+        Get clinical conversation context for the Health Coach.
+
+        Args:
+            query: Topic or question to search for.
+            patient_id: UUID of the patient.
+            n_results: Maximum number of results.
+
+        Returns:
+            Formatted string with relevant clinical context.
+        """
+        results = self.search_clinical_conversations(query, patient_id, n_results)
+
+        if not results:
+            return "No relevant clinical conversation history found."
+
+        context_parts = ["Relevant information from past clinical conversations:"]
+        for i, result in enumerate(results, 1):
+            content = result["content"]
+            # Remove the [Clinical Consultation] prefix for cleaner output
+            if content.startswith("[Clinical Consultation] "):
+                content = content[24:]
+            context_parts.append(f"\n{i}. {content}")
+
+        return "\n".join(context_parts)
 
 
 # Singleton instance

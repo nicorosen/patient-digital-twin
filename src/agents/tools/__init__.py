@@ -9,33 +9,90 @@ Includes:
 
 from src.agents.tools.consultation import CONSULTATION_TOOLS, consult_primary_care
 from src.agents.tools.patient_data import (
+    HEALTH_COACH_TOOLS,
     PATIENT_DATA_TOOLS,
-    add_allergy,
+    # Getter tools
+    get_patient_profile,
+    get_conditions,
+    get_medications,
+    get_allergies,
+    get_vital_signs,
+    get_lab_results,
+    get_family_history,
+    get_social_history,
+    search_patient_data,
+    search_clinical_history,
+    # Add tools
     add_condition,
     add_medication,
-    get_patient_profile,
-    search_patient_data,
+    add_allergy,
+    add_vital_signs,
+    add_lab_result,
+    add_family_history,
+    add_social_history,
+    # Update tools
+    update_condition,
+    update_medication,
+    update_allergy,
+    update_vital_signs,
+    update_lab_result,
+    update_family_history,
+    update_social_history,
+    # Delete tools
+    delete_condition,
+    delete_medication,
+    delete_allergy,
+    delete_vital_signs,
+    delete_lab_result,
+    delete_family_history,
+    delete_social_history,
 )
 
 # All tools available to the Medical Assistant
 ALL_TOOLS = PATIENT_DATA_TOOLS + CONSULTATION_TOOLS
 
-# Read-only tools for Health Coach (no data modification, no specialist consultation)
-HEALTH_COACH_TOOLS = [get_patient_profile, search_patient_data]
-
 __all__ = [
-    # Patient data tools
+    # Patient data tools - getters
     "get_patient_profile",
+    "get_conditions",
+    "get_medications",
+    "get_allergies",
+    "get_vital_signs",
+    "get_lab_results",
+    "get_family_history",
+    "get_social_history",
     "search_patient_data",
+    "search_clinical_history",
+    # Patient data tools - add
     "add_condition",
     "add_medication",
     "add_allergy",
+    "add_vital_signs",
+    "add_lab_result",
+    "add_family_history",
+    "add_social_history",
+    # Patient data tools - update
+    "update_condition",
+    "update_medication",
+    "update_allergy",
+    "update_vital_signs",
+    "update_lab_result",
+    "update_family_history",
+    "update_social_history",
+    # Patient data tools - delete
+    "delete_condition",
+    "delete_medication",
+    "delete_allergy",
+    "delete_vital_signs",
+    "delete_lab_result",
+    "delete_family_history",
+    "delete_social_history",
     "PATIENT_DATA_TOOLS",
     # Consultation tools
     "consult_primary_care",
     "CONSULTATION_TOOLS",
     # Combined
     "ALL_TOOLS",
-    # Health Coach tools (read-only)
+    # Health Coach tools (read-only with clinical history access)
     "HEALTH_COACH_TOOLS",
 ]
