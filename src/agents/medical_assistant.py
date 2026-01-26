@@ -151,7 +151,13 @@ Only add to their record after confirmation.
 class MedicalAssistant:
     """Medical Assistant agent for patient interaction."""
 
-    def __init__(self, patient_id: UUID, user_role: str = "patient"):
+    def __init__(
+        self,
+        patient_id: UUID,
+        user_role: str = "patient",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
         """
         Initialize the Medical Assistant for a specific patient.
 
@@ -159,13 +165,15 @@ class MedicalAssistant:
             patient_id: UUID of the patient this assistant is helping.
             user_role: Role of the user ('patient' or 'doctor'). Doctors can
                       update and delete records, patients cannot.
+            provider: LLM provider override (anthropic, openai, google).
+            model: Model name override.
         """
-        logger.info(f"Initializing MedicalAssistant for patient_id={patient_id}, role={user_role}")
+        logger.info(f"Initializing MedicalAssistant for patient_id={patient_id}, role={user_role}, provider={provider}, model={model}")
         self.patient_id = patient_id
         self.user_role = user_role
 
         # Initialize LLM with tools using the provider factory
-        self.llm = get_chat_model()
+        self.llm = get_chat_model(provider=provider, model=model)
 
         # Bind tools to LLM
         self.llm_with_tools = self.llm.bind_tools(ALL_TOOLS)

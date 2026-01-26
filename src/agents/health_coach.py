@@ -111,18 +111,25 @@ def _format_messages_for_log(messages: List[BaseMessage]) -> str:
 class HealthCoach:
     """Health Coach agent for patient education and motivation."""
 
-    def __init__(self, patient_id: UUID):
+    def __init__(
+        self,
+        patient_id: UUID,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
         """
         Initialize the Health Coach for a specific patient.
 
         Args:
             patient_id: UUID of the patient this coach is helping.
+            provider: LLM provider override (anthropic, openai, google).
+            model: Model name override.
         """
-        logger.info(f"Initializing HealthCoach for patient_id={patient_id}")
+        logger.info(f"Initializing HealthCoach for patient_id={patient_id}, provider={provider}, model={model}")
         self.patient_id = patient_id
 
         # Initialize LLM with tools
-        self.llm = get_chat_model()
+        self.llm = get_chat_model(provider=provider, model=model)
 
         # Bind only read-only tools (no data modification, no specialist consultation)
         self.llm_with_tools = self.llm.bind_tools(HEALTH_COACH_TOOLS)

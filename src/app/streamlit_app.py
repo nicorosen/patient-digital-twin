@@ -90,6 +90,29 @@ def init_session_state():
         st.session_state.editing_session_id = None
     if "user_role" not in st.session_state:
         st.session_state.user_role = "patient"  # Default to patient role
+    if "llm_provider" not in st.session_state:
+        st.session_state.llm_provider = "anthropic"  # Default to Claude
+    if "llm_model" not in st.session_state:
+        st.session_state.llm_model = "claude-sonnet-4-20250514"
+
+
+# Available models per provider
+LLM_PROVIDER_MODELS = {
+    "anthropic": [
+        ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
+        ("claude-opus-4-20250514", "Claude Opus 4"),
+    ],
+    "google": [
+        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gemini-2.0-flash", "Gemini 2.0 Flash"),
+        ("gemini-1.5-pro", "Gemini 1.5 Pro"),
+    ],
+    "openai": [
+        ("gpt-4o", "GPT-4o"),
+        ("gpt-4-turbo", "GPT-4 Turbo"),
+        ("gpt-4o-mini", "GPT-4o Mini"),
+    ],
+}
 
 
 def get_conversation_mode():
@@ -690,6 +713,54 @@ def main():
 
         st.markdown("---")
 
+        # LLM Provider/Model Selection
+        st.subheader("🤖 LLM Settings")
+
+        provider_options = list(LLM_PROVIDER_MODELS.keys())
+        provider_labels = {"anthropic": "Anthropic (Claude)", "google": "Google (Gemini)", "openai": "OpenAI (GPT)"}
+
+        selected_provider = st.selectbox(
+            "Provider",
+            options=provider_options,
+            format_func=lambda x: provider_labels.get(x, x),
+            index=provider_options.index(st.session_state.llm_provider),
+            key="provider_selector",
+        )
+
+        if selected_provider != st.session_state.llm_provider:
+            logger.info(f"Provider changed: {selected_provider}")
+            st.session_state.llm_provider = selected_provider
+            # Reset to first model for new provider
+            st.session_state.llm_model = LLM_PROVIDER_MODELS[selected_provider][0][0]
+            st.rerun()
+
+        # Model selection based on provider
+        model_options = LLM_PROVIDER_MODELS[st.session_state.llm_provider]
+        model_ids = [m[0] for m in model_options]
+        model_labels = {m[0]: m[1] for m in model_options}
+
+        # Ensure current model is valid for selected provider
+        if st.session_state.llm_model not in model_ids:
+            st.session_state.llm_model = model_ids[0]
+
+        selected_model = st.selectbox(
+            "Model",
+            options=model_ids,
+            format_func=lambda x: model_labels.get(x, x),
+            index=model_ids.index(st.session_state.llm_model),
+            key="model_selector",
+        )
+
+        if selected_model != st.session_state.llm_model:
+            logger.info(f"Model changed: {selected_model}")
+            st.session_state.llm_model = selected_model
+            st.rerun()
+
+        # Show current selection
+        st.caption(f"Using: {model_labels.get(st.session_state.llm_model, st.session_state.llm_model)}")
+
+        st.markdown("---")
+
         # Conversation history sidebar
         display_conversation_sidebar()
 
@@ -794,9 +865,18 @@ def main():
 
                     patient_uuid = UUID(st.session_state.patient_id)
                     if st.session_state.agent_type == "Health Coach":
-                        agent = HealthCoach(patient_uuid)
+                        agent = HealthCoach(
+                            patient_uuid,
+                            provider=st.session_state.llm_provider,
+                            model=st.session_state.llm_model,
+                        )
                     else:
-                        agent = MedicalAssistant(patient_uuid, user_role=st.session_state.user_role)
+                        agent = MedicalAssistant(
+                            patient_uuid,
+                            user_role=st.session_state.user_role,
+                            provider=st.session_state.llm_provider,
+                            model=st.session_state.llm_model,
+                        )
 
                     response = agent.chat(user_prompt, st.session_state.messages[:-1])
                     st.markdown(response)
