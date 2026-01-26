@@ -224,3 +224,7 @@ data/patients/
 
 # Claude Code plans (local only)
 .claude/
+
+# macOS
+.DS_Store
+*.DS_Store
