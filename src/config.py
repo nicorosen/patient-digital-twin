@@ -8,6 +8,7 @@ All settings are validated on application startup.
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +24,18 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql://localhost:5432/patient_twin"
+
+    @model_validator(mode="after")
+    def check_streamlit_secrets(self) -> "Settings":
+        """Override database_url from Streamlit secrets if available."""
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets") and "DATABASE_URL" in st.secrets:
+                # Use object.__setattr__ to bypass frozen validation if any
+                object.__setattr__(self, "database_url", st.secrets["DATABASE_URL"])
+        except Exception:
+            pass
+        return self
 
     # LLM Provider Selection
     llm_provider: str = "google"  # anthropic | openai | google

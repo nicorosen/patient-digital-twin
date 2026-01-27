@@ -84,6 +84,21 @@ from src.schemas.conversation import (
     ConversationMessageCreate,
     ConversationMessageSchema,
 )
+from src.schemas.user import (
+    UserBase,
+    UserCreate,
+    UserSchema,
+    UserSummary,
+    UserUpdate,
+)
+from src.schemas.patient_member import (
+    MemberRole,
+    PatientMemberBase,
+    PatientMemberCreate,
+    PatientMemberSchema,
+    PatientMemberUpdate,
+    PatientMemberWithUser,
+)
 
 __all__ = [
     # Enums
@@ -151,4 +166,17 @@ __all__ = [
     "ConversationMessageBase",
     "ConversationMessageCreate",
     "ConversationMessageSchema",
+    # User
+    "UserBase",
+    "UserCreate",
+    "UserUpdate",
+    "UserSchema",
+    "UserSummary",
+    # PatientMember
+    "MemberRole",
+    "PatientMemberBase",
+    "PatientMemberCreate",
+    "PatientMemberUpdate",
+    "PatientMemberSchema",
+    "PatientMemberWithUser",
 ]

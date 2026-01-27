@@ -20,7 +20,9 @@ from src.models import (
     LabResult,
     Medication,
     Patient,
+    PatientMember,
     SocialHistory,
+    User,
     VitalSigns,
 )
 from src.schemas import (
@@ -38,14 +40,17 @@ from src.schemas import (
     MedicationCreate,
     MedicationUpdate,
     PatientCreate,
+    PatientMemberCreate,
     PatientProfile,
     PatientSchema,
     PatientUpdate,
     SocialHistoryCreate,
     SocialHistoryUpdate,
+    UserCreate,
     VitalSignsCreate,
     VitalSignsUpdate,
 )
+from src.auth.password import hash_password, verify_password
 
 
 class PatientRepository:
@@ -893,3 +898,160 @@ class SocialHistoryRepository:
         db.delete(social_history)
         db.flush()
         return True
+
+
+class UserRepository:
+    """Repository for User CRUD operations."""
+
+    @staticmethod
+    def get_by_id(db: Session, user_id: UUID) -> Optional[User]:
+        """Get a user by ID."""
+        return db.query(User).filter(User.id == user_id).first()
+
+    @staticmethod
+    def get_by_username(db: Session, username: str) -> Optional[User]:
+        """Get a user by username."""
+        return db.query(User).filter(User.username == username).first()
+
+    @staticmethod
+    def get_by_email(db: Session, email: str) -> Optional[User]:
+        """Get a user by email."""
+        return db.query(User).filter(User.email == email).first()
+
+    @staticmethod
+    def get_all(db: Session, active_only: bool = True) -> List[User]:
+        """Get all users, optionally filtering to active only."""
+        query = db.query(User)
+        if active_only:
+            query = query.filter(User.is_active == True)
+        return query.order_by(User.name).all()
+
+    @staticmethod
+    def create(db: Session, user_data: UserCreate) -> User:
+        """Create a new user."""
+        user = User(
+            username=user_data.username,
+            email=user_data.email,
+            hashed_password=hash_password(user_data.password),
+            name=user_data.name,
+            is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        return user
+
+    @staticmethod
+    def authenticate(db: Session, username: str, password: str) -> Optional[User]:
+        """Authenticate a user by username and password."""
+        user = UserRepository.get_by_username(db, username)
+        if not user:
+            return None
+        if not user.is_active:
+            return None
+        if not verify_password(password, user.hashed_password):
+            return None
+        return user
+
+    @staticmethod
+    def update_password(db: Session, user_id: UUID, new_password: str) -> Optional[User]:
+        """Update a user's password."""
+        user = UserRepository.get_by_id(db, user_id)
+        if not user:
+            return None
+        user.hashed_password = hash_password(new_password)
+        db.flush()
+        return user
+
+    @staticmethod
+    def deactivate(db: Session, user_id: UUID) -> Optional[User]:
+        """Deactivate a user account."""
+        user = UserRepository.get_by_id(db, user_id)
+        if not user:
+            return None
+        user.is_active = False
+        db.flush()
+        return user
+
+
+class PatientMemberRepository:
+    """Repository for PatientMember CRUD operations."""
+
+    @staticmethod
+    def get_members_by_patient(db: Session, patient_id: UUID) -> List[PatientMember]:
+        """Get all members for a patient."""
+        return (
+            db.query(PatientMember)
+            .filter(PatientMember.patient_id == patient_id)
+            .order_by(PatientMember.role)
+            .all()
+        )
+
+    @staticmethod
+    def get_patients_for_user(db: Session, user_id: UUID) -> List[Patient]:
+        """Get all patients a user is a member of."""
+        return (
+            db.query(Patient)
+            .join(PatientMember, Patient.id == PatientMember.patient_id)
+            .filter(PatientMember.user_id == user_id)
+            .order_by(Patient.last_name, Patient.first_name)
+            .all()
+        )
+
+    @staticmethod
+    def get_membership(
+        db: Session, user_id: UUID, patient_id: UUID
+    ) -> Optional[PatientMember]:
+        """Get a specific membership."""
+        return (
+            db.query(PatientMember)
+            .filter(
+                PatientMember.user_id == user_id,
+                PatientMember.patient_id == patient_id,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def add_member(db: Session, member_data: PatientMemberCreate) -> PatientMember:
+        """Add a member to a patient."""
+        member = PatientMember(
+            user_id=member_data.user_id,
+            patient_id=member_data.patient_id,
+            role=member_data.role.value,
+        )
+        db.add(member)
+        db.flush()
+        return member
+
+    @staticmethod
+    def update_role(
+        db: Session, user_id: UUID, patient_id: UUID, new_role: str
+    ) -> Optional[PatientMember]:
+        """Update a member's role."""
+        member = PatientMemberRepository.get_membership(db, user_id, patient_id)
+        if not member:
+            return None
+        member.role = new_role
+        db.flush()
+        return member
+
+    @staticmethod
+    def remove_member(db: Session, user_id: UUID, patient_id: UUID) -> bool:
+        """Remove a member from a patient."""
+        member = PatientMemberRepository.get_membership(db, user_id, patient_id)
+        if not member:
+            return False
+        db.delete(member)
+        db.flush()
+        return True
+
+    @staticmethod
+    def is_member(db: Session, user_id: UUID, patient_id: UUID) -> bool:
+        """Check if a user is a member of a patient."""
+        return PatientMemberRepository.get_membership(db, user_id, patient_id) is not None
+
+    @staticmethod
+    def get_user_role(db: Session, user_id: UUID, patient_id: UUID) -> Optional[str]:
+        """Get a user's role for a patient, or None if not a member."""
+        member = PatientMemberRepository.get_membership(db, user_id, patient_id)
+        return member.role if member else None

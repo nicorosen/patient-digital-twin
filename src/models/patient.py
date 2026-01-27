@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         SocialHistory,
         VitalSigns,
     )
+    from src.models.patient_member import PatientMember
 
 
 class Patient(Base, UUIDMixin, TimestampMixin):
@@ -82,6 +83,12 @@ class Patient(Base, UUIDMixin, TimestampMixin):
     )
     social_history: Mapped[List["SocialHistory"]] = relationship(
         "SocialHistory",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    members: Mapped[List["PatientMember"]] = relationship(
+        "PatientMember",
         back_populates="patient",
         cascade="all, delete-orphan",
         lazy="selectin",

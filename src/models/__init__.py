@@ -21,6 +21,8 @@ from src.models.conversation import (
     ConversationSession,
 )
 from src.models.patient import Patient
+from src.models.patient_member import MemberRole, PatientMember
+from src.models.user import User
 
 __all__ = [
     # Base
@@ -42,4 +44,8 @@ __all__ = [
     "ConversationSession",
     "ConversationMessage",
     "ConsultationAuditLog",
+    # User & Members
+    "User",
+    "PatientMember",
+    "MemberRole",
 ]

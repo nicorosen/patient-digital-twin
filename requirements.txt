@@ -29,6 +29,8 @@ pydantic-settings>=2.0.0       # Environment variable management
 
 # Utilities
 python-dotenv>=1.0.0           # Load .env files
+passlib>=1.7.4                 # Password hashing
+bcrypt==4.0.1                  # Bcrypt (pinned for passlib compatibility)
 
 # Testing
 pytest>=8.0.0                  # Test framework

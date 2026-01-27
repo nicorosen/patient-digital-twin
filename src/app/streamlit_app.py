@@ -32,8 +32,11 @@ from src.database.repositories import (
     AuditLogRepository,
     ConversationRepository,
     ConversationSessionRepository,
+    PatientMemberRepository,
     PatientRepository,
+    UserRepository,
 )
+from src.schemas import MemberRole
 from src.logging_config import get_logger, setup_logging
 
 # Initialize logging at app startup
@@ -42,20 +45,37 @@ logger = get_logger("app.streamlit")
 
 
 def get_authenticator():
-    """Create and return the authenticator instance."""
-    # Load credentials from secrets
-    credentials = {
-        "usernames": {}
-    }
+    """Create and return the authenticator instance.
 
-    # Build credentials dict from secrets
-    if "credentials" in st.secrets and "usernames" in st.secrets["credentials"]:
-        for username, user_data in st.secrets["credentials"]["usernames"].items():
-            credentials["usernames"][username] = {
-                "name": user_data["name"],
-                "email": user_data["email"],
-                "password": user_data["password"],
-            }
+    Uses database credentials if available, falls back to secrets for backwards compatibility.
+    """
+    credentials = {"usernames": {}}
+
+    # Try to load credentials from database first
+    try:
+        with get_db() as db:
+            users = UserRepository.get_all(db, active_only=True)
+            if users:
+                for user in users:
+                    credentials["usernames"][user.username] = {
+                        "name": user.name,
+                        "email": user.email,
+                        "password": user.hashed_password,  # Already hashed
+                    }
+                logger.debug(f"Loaded {len(users)} users from database")
+    except Exception as e:
+        logger.warning(f"Could not load users from database: {e}")
+
+    # Fall back to secrets if no database users
+    if not credentials["usernames"]:
+        if "credentials" in st.secrets and "usernames" in st.secrets["credentials"]:
+            for username, user_data in st.secrets["credentials"]["usernames"].items():
+                credentials["usernames"][username] = {
+                    "name": user_data["name"],
+                    "email": user_data["email"],
+                    "password": user_data["password"],
+                }
+            logger.debug("Using credentials from secrets (fallback)")
 
     # Create authenticator
     authenticator = stauth.Authenticate(
@@ -68,11 +88,30 @@ def get_authenticator():
     return authenticator
 
 
-def get_user_role(username: str) -> str:
-    """Get the role for a given username from secrets."""
+def get_user_from_db(username: str):
+    """Get user object from database by username."""
     try:
-        return st.secrets["credentials"]["usernames"][username].get("role", "patient")
-    except (KeyError, TypeError):
+        with get_db() as db:
+            return UserRepository.get_by_username(db, username)
+    except Exception:
+        return None
+
+
+def get_user_role_for_patient(user_id, patient_id) -> str:
+    """Get the user's role for a specific patient."""
+    if not user_id or not patient_id:
+        return "patient"  # Default fallback
+    try:
+        from uuid import UUID
+        with get_db() as db:
+            role = PatientMemberRepository.get_user_role(
+                db,
+                UUID(str(user_id)),
+                UUID(str(patient_id))
+            )
+            return role if role else "patient"
+    except Exception as e:
+        logger.warning(f"Could not get user role for patient: {e}")
         return "patient"
 
 
@@ -96,9 +135,6 @@ def ensure_patients_indexed():
         if indexed_count > 0:
             logger.info(f"Auto-indexed {indexed_count} patients for RAG search")
 
-
-# Auto-index patients on startup if needed
-ensure_patients_indexed()
 
 # Page configuration
 st.set_page_config(
@@ -127,6 +163,8 @@ def init_session_state():
         st.session_state.editing_session_id = None
     if "user_role" not in st.session_state:
         st.session_state.user_role = "patient"  # Default to patient role
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None  # Database user UUID
     if "llm_provider" not in st.session_state:
         st.session_state.llm_provider = "anthropic"  # Default to Claude
     if "llm_model" not in st.session_state:
@@ -440,6 +478,108 @@ def display_patient_profile(patient_id):
             st.write("No known allergies")
 
 
+def display_member_management(patient_id):
+    """Display member management section for doctors."""
+    from uuid import UUID
+
+    user_role = st.session_state.get("user_role", "patient")
+
+    with st.expander("👥 Manage Members", expanded=False):
+        with get_db() as db:
+            members = PatientMemberRepository.get_members_by_patient(db, UUID(patient_id))
+
+            if not members:
+                st.info("No members assigned to this patient")
+            else:
+                st.caption("Current members:")
+                for member in members:
+                    col_name, col_role, col_actions = st.columns([2, 1, 1])
+
+                    with col_name:
+                        st.write(f"**{member.user.name}**")
+                        st.caption(f"@{member.user.username}")
+
+                    with col_role:
+                        role_emoji = {
+                            "doctor": "👨‍⚕️",
+                            "patient": "🧑",
+                            "caregiver": "👥",
+                        }.get(member.role, "👤")
+                        st.write(f"{role_emoji} {member.role.capitalize()}")
+
+                    with col_actions:
+                        if user_role == "doctor":
+                            # Change role dropdown
+                            member_key = f"role_{member.user_id}_{patient_id}"
+                            new_role = st.selectbox(
+                                "Role",
+                                options=["doctor", "patient", "caregiver"],
+                                index=["doctor", "patient", "caregiver"].index(member.role),
+                                key=member_key,
+                                label_visibility="collapsed",
+                            )
+                            if new_role != member.role:
+                                PatientMemberRepository.update_role(
+                                    db, member.user_id, UUID(patient_id), new_role
+                                )
+                                db.commit()
+                                st.rerun()
+
+                    # Remove button (only for doctors, can't remove self)
+                    if user_role == "doctor" and str(member.user_id) != st.session_state.user_id:
+                        if st.button(
+                            "Remove",
+                            key=f"remove_{member.user_id}_{patient_id}",
+                            type="secondary",
+                        ):
+                            PatientMemberRepository.remove_member(
+                                db, member.user_id, UUID(patient_id)
+                            )
+                            db.commit()
+                            st.success(f"Removed {member.user.name}")
+                            st.rerun()
+
+                    st.markdown("---")
+
+            # Add member section (doctors only)
+            if user_role == "doctor":
+                st.subheader("Add Member")
+                # Get users not already members
+                all_users = UserRepository.get_all(db)
+                member_user_ids = {str(m.user_id) for m in members}
+                available_users = [u for u in all_users if str(u.id) not in member_user_ids]
+
+                if available_users:
+                    user_options = {f"{u.name} (@{u.username})": str(u.id) for u in available_users}
+                    selected_user = st.selectbox(
+                        "Select User",
+                        options=list(user_options.keys()),
+                        key="add_member_user",
+                    )
+                    selected_role = st.selectbox(
+                        "Role",
+                        options=["doctor", "patient", "caregiver"],
+                        index=2,  # Default to caregiver
+                        key="add_member_role",
+                    )
+
+                    if st.button("Add Member", type="primary", use_container_width=True):
+                        from src.schemas import PatientMemberCreate
+                        PatientMemberRepository.add_member(
+                            db,
+                            PatientMemberCreate(
+                                user_id=UUID(user_options[selected_user]),
+                                patient_id=UUID(patient_id),
+                                role=MemberRole(selected_role),
+                            ),
+                        )
+                        db.commit()
+                        st.success(f"Added {selected_user}")
+                        st.rerun()
+                else:
+                    st.info("All users are already members")
+
+
 def display_audit_log(patient_id):
     """Display consultation audit log with visual cards."""
     with get_db() as db:
@@ -683,25 +823,45 @@ def main():
     logger.info(f"User logged in: {st.session_state.get('username')}")
     init_session_state()
 
-    # Set user role from credentials (override session state)
-    authenticated_role = get_user_role(st.session_state.get("username", ""))
-    st.session_state.user_role = authenticated_role
+    # Get user from database and store user_id
+    db_user = get_user_from_db(st.session_state.get("username", ""))
+    if db_user:
+        st.session_state.user_id = str(db_user.id)
+    else:
+        st.session_state.user_id = None
+
+    # Auto-index patients on startup if needed (only once per session)
+    if "patients_indexed" not in st.session_state:
+        try:
+            ensure_patients_indexed()
+            st.session_state.patients_indexed = True
+        except Exception as e:
+            logger.error(f"Failed to index patients: {e}")
+            st.error(f"Database connection error: {e}\n\nPlease ensure DATABASE_URL is configured in your Streamlit secrets.")
+            return
 
     # Sidebar
     with st.sidebar:
         # User info and logout at top
         st.markdown(f"### Welcome, {st.session_state.get('name', 'User')}!")
-        st.caption(f"Role: **{authenticated_role.capitalize()}**")
         authenticator.logout("Logout", "sidebar")
         st.markdown("---")
 
         st.title("🏥 Patient Digital Twin")
         st.markdown("---")
 
-        # Patient Selection
+        # Patient Selection - filter by user's membership
         st.subheader("Select Patient")
         with get_db() as db:
-            patients = PatientRepository.get_all(db)
+            from uuid import UUID
+            if st.session_state.user_id:
+                # Show only patients the user is a member of
+                patients = PatientMemberRepository.get_patients_for_user(
+                    db, UUID(st.session_state.user_id)
+                )
+            else:
+                # Fallback to all patients if no database user
+                patients = PatientRepository.get_all(db)
             patient_options = {f"{p.first_name} {p.last_name}": str(p.id) for p in patients}
 
         if not patient_options:
@@ -724,7 +884,19 @@ def main():
                 st.session_state.patient_name = selected_name
                 st.session_state.messages = []
                 st.session_state.current_session_id = None
+                # Update user role for the new patient
+                st.session_state.user_role = get_user_role_for_patient(
+                    st.session_state.user_id, new_patient_id
+                )
                 st.rerun()
+
+        # Set user role for current patient if not already set
+        if st.session_state.patient_id and st.session_state.user_id:
+            current_role = get_user_role_for_patient(
+                st.session_state.user_id, st.session_state.patient_id
+            )
+            st.session_state.user_role = current_role
+            st.caption(f"Your role: **{current_role.capitalize()}**")
 
         st.markdown("---")
 
@@ -755,12 +927,15 @@ def main():
 
         st.markdown("---")
 
-        # User Role Display (based on authenticated user)
+        # User Role Display (based on patient membership)
         st.subheader("👤 Your Permissions")
-        if st.session_state.user_role == "doctor":
-            st.success("👨‍⚕️ **Doctor Access**\n\n✓ View records\n✓ Add new records\n✓ Update records\n✓ Delete records")
-        else:
-            st.info("🧑 **Patient Access**\n\n✓ View records\n✓ Add new records\n✗ Update records\n✗ Delete records")
+        user_role = st.session_state.user_role
+        if user_role == "doctor":
+            st.success("👨‍⚕️ **Doctor Access**\n\n✓ View records\n✓ Add records\n✓ Update records\n✓ Delete records\n✓ Manage members")
+        elif user_role == "patient":
+            st.info("🧑 **Patient Access**\n\n✓ View records\n✓ Add records\n✗ Update records\n✗ Delete records\n✗ Manage members")
+        else:  # caregiver
+            st.warning("👥 **Caregiver Access**\n\n✓ View records\n✗ Add records\n✗ Update records\n✗ Delete records\n✗ Manage members")
 
         st.markdown("---")
 
@@ -820,6 +995,11 @@ def main():
         # Profile display
         if st.session_state.patient_id:
             display_patient_profile(st.session_state.patient_id)
+
+            st.markdown("---")
+
+            # Member management (shown to all, editable by doctors)
+            display_member_management(st.session_state.patient_id)
 
             st.markdown("---")
 

@@ -19,8 +19,10 @@ from src.database.repositories import (
     FamilyHistoryRepository,
     LabResultRepository,
     MedicationRepository,
+    PatientMemberRepository,
     PatientRepository,
     SocialHistoryRepository,
+    UserRepository,
     VitalSignsRepository,
 )
 from src.schemas import (
@@ -36,11 +38,14 @@ from src.schemas import (
     LabResultCreate,
     MedicationCreate,
     MedicationStatus,
+    MemberRole,
     PatientCreate,
+    PatientMemberCreate,
     Severity,
     SocialHistoryCategory,
     SocialHistoryCreate,
     SocialHistoryStatus,
+    UserCreate,
     VitalSignsCreate,
 )
 
@@ -649,6 +654,101 @@ def seed_sarah_chen(db) -> None:
     print(f"  Created patient: {patient.full_name} (ID: {patient.id})")
 
 
+def seed_users(db) -> dict:
+    """Create demo users matching current authentication credentials.
+
+    Returns:
+        dict: Mapping of username to user object
+    """
+    print("Creating demo users...")
+
+    users = {}
+
+    # Admin user (doctor role)
+    admin = UserRepository.create(
+        db,
+        UserCreate(
+            username="admin",
+            email="admin@example.com",
+            password="admin123",
+            name="Admin User",
+        ),
+    )
+    users["admin"] = admin
+    print(f"  Created user: {admin.username} (ID: {admin.id})")
+
+    # Doctor user
+    doctor = UserRepository.create(
+        db,
+        UserCreate(
+            username="doctor",
+            email="doctor@example.com",
+            password="doctor123",
+            name="Dr. Smith",
+        ),
+    )
+    users["doctor"] = doctor
+    print(f"  Created user: {doctor.username} (ID: {doctor.id})")
+
+    # Patient user
+    patient_user = UserRepository.create(
+        db,
+        UserCreate(
+            username="patient",
+            email="patient@example.com",
+            password="patient123",
+            name="John Patient",
+        ),
+    )
+    users["patient"] = patient_user
+    print(f"  Created user: {patient_user.username} (ID: {patient_user.id})")
+
+    return users
+
+
+def seed_patient_memberships(db, users: dict, patients: list) -> None:
+    """Create patient memberships linking users to patients.
+
+    Args:
+        db: Database session
+        users: Dict mapping username to User object
+        patients: List of Patient objects
+    """
+    print("\nCreating patient memberships...")
+
+    # Admin and doctor get access to all patients as doctor role
+    for patient in patients:
+        PatientMemberRepository.add_member(
+            db,
+            PatientMemberCreate(
+                user_id=users["admin"].id,
+                patient_id=patient.id,
+                role=MemberRole.DOCTOR,
+            ),
+        )
+        PatientMemberRepository.add_member(
+            db,
+            PatientMemberCreate(
+                user_id=users["doctor"].id,
+                patient_id=patient.id,
+                role=MemberRole.DOCTOR,
+            ),
+        )
+        print(f"  Added admin and doctor to patient: {patient.full_name}")
+
+    # Patient user gets access to first patient (Maria Garcia) as patient role
+    if patients:
+        PatientMemberRepository.add_member(
+            db,
+            PatientMemberCreate(
+                user_id=users["patient"].id,
+                patient_id=patients[0].id,
+                role=MemberRole.PATIENT,
+            ),
+        )
+        print(f"  Added patient user to: {patients[0].full_name}")
+
+
 def seed_database() -> None:
     """Seed the database with all synthetic patients."""
     print("\n" + "=" * 60)
@@ -660,25 +760,45 @@ def seed_database() -> None:
     create_tables()
     print("Tables created.\n")
 
-    # Seed patients
+    # Seed data
     with get_db() as db:
         # Check if data already exists
-        existing = PatientRepository.get_all(db)
-        if existing:
-            print(f"Database already has {len(existing)} patients.")
+        existing_patients = PatientRepository.get_all(db)
+        existing_users = UserRepository.get_all(db, active_only=False)
+
+        if existing_patients and existing_users:
+            print(f"Database already has {len(existing_patients)} patients and {len(existing_users)} users.")
             print("To reset, run: python -m src.database.reset\n")
             return
 
-        seed_maria_garcia(db)
-        seed_james_thompson(db)
-        seed_sarah_chen(db)
+        # Seed users first (if not already seeded)
+        if not existing_users:
+            users = seed_users(db)
+        else:
+            print(f"Users already exist ({len(existing_users)}), skipping user creation.")
+            # Build users dict from existing
+            users = {u.username: u for u in existing_users}
+
+        # Seed patients (if not already seeded)
+        if not existing_patients:
+            seed_maria_garcia(db)
+            seed_james_thompson(db)
+            seed_sarah_chen(db)
+        else:
+            print(f"Patients already exist ({len(existing_patients)}), skipping patient creation.")
+
+        # Get all patients for membership creation and indexing
+        patients = PatientRepository.get_all(db)
+
+        # Create patient memberships (if users were just created)
+        if not existing_users and patients:
+            seed_patient_memberships(db, users, patients)
 
         # Auto-index all patients for RAG search
         print("\nIndexing patients for RAG search...")
         from src.rag import get_retriever
 
         retriever = get_retriever()
-        patients = PatientRepository.get_all(db)
         total_docs = 0
         for patient in patients:
             count = retriever.index_patient(db, patient.id)
@@ -690,7 +810,10 @@ def seed_database() -> None:
         print("-" * 60)
 
         # Print summary
-        patients = PatientRepository.get_all(db)
+        print(f"\nCreated {len(users)} users:")
+        for username, user in users.items():
+            print(f"  - {user.name} ({username})")
+
         print(f"\nCreated {len(patients)} patients:")
         for p in patients:
             conditions = len(p.conditions)
@@ -700,11 +823,13 @@ def seed_database() -> None:
             lab_results = len(p.lab_results)
             family_history = len(p.family_history)
             social_history = len(p.social_history)
+            members = len(p.members)
             print(
                 f"  - {p.full_name} ({p.age}y {p.gender}): "
                 f"{conditions} conditions, {medications} meds, {allergies} allergies, "
                 f"{vital_signs} vitals, {lab_results} labs, "
-                f"{family_history} family hx, {social_history} social hx"
+                f"{family_history} family hx, {social_history} social hx, "
+                f"{members} members"
             )
         print()
 
