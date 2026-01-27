@@ -2,6 +2,7 @@
 Streamlit chat interface for Patient Digital Twin.
 
 Provides:
+- Secure authentication (login/logout)
 - Patient selection
 - Agent selection (Medical Assistant or Health Coach)
 - Health profile sidebar
@@ -21,6 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
 import streamlit as st
+import streamlit_authenticator as stauth
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -37,6 +39,41 @@ from src.logging_config import get_logger, setup_logging
 # Initialize logging at app startup
 setup_logging()
 logger = get_logger("app.streamlit")
+
+
+def get_authenticator():
+    """Create and return the authenticator instance."""
+    # Load credentials from secrets
+    credentials = {
+        "usernames": {}
+    }
+
+    # Build credentials dict from secrets
+    if "credentials" in st.secrets and "usernames" in st.secrets["credentials"]:
+        for username, user_data in st.secrets["credentials"]["usernames"].items():
+            credentials["usernames"][username] = {
+                "name": user_data["name"],
+                "email": user_data["email"],
+                "password": user_data["password"],
+            }
+
+    # Create authenticator
+    authenticator = stauth.Authenticate(
+        credentials,
+        st.secrets["auth"]["cookie_name"],
+        st.secrets["auth"]["cookie_key"],
+        st.secrets["auth"]["cookie_expiry_days"],
+    )
+
+    return authenticator
+
+
+def get_user_role(username: str) -> str:
+    """Get the role for a given username from secrets."""
+    try:
+        return st.secrets["credentials"]["usernames"][username].get("role", "patient")
+    except (KeyError, TypeError):
+        return "patient"
 
 
 def ensure_patients_indexed():
@@ -621,10 +658,43 @@ def get_suggested_prompts():
 def main():
     """Main application entry point."""
     logger.debug("Starting main application")
+
+    # Initialize authenticator
+    authenticator = get_authenticator()
+
+    # Show login form
+    try:
+        authenticator.login(location="main")
+    except Exception as e:
+        st.error(f"Authentication error: {e}")
+        logger.error(f"Authentication error: {e}")
+        return
+
+    # Check authentication status
+    if st.session_state.get("authentication_status") is None:
+        st.warning("Please enter your username and password")
+        st.info("**Demo Credentials:**\n- Username: `admin`, `doctor`, or `patient`\n- Password: `admin123`, `doctor123`, or `patient123`")
+        return
+    elif st.session_state.get("authentication_status") is False:
+        st.error("Username/password is incorrect")
+        return
+
+    # User is authenticated - proceed with app
+    logger.info(f"User logged in: {st.session_state.get('username')}")
     init_session_state()
+
+    # Set user role from credentials (override session state)
+    authenticated_role = get_user_role(st.session_state.get("username", ""))
+    st.session_state.user_role = authenticated_role
 
     # Sidebar
     with st.sidebar:
+        # User info and logout at top
+        st.markdown(f"### Welcome, {st.session_state.get('name', 'User')}!")
+        st.caption(f"Role: **{authenticated_role.capitalize()}**")
+        authenticator.logout("Logout", "sidebar")
+        st.markdown("---")
+
         st.title("🏥 Patient Digital Twin")
         st.markdown("---")
 
@@ -685,31 +755,12 @@ def main():
 
         st.markdown("---")
 
-        # User Role Toggle (Demo Mode)
-        st.subheader("👤 User Role")
-        role_options = ["patient", "doctor"]
-        role_labels = {"patient": "🧑 Patient", "doctor": "👨‍⚕️ Doctor"}
-        selected_role = st.radio(
-            "Role",
-            options=role_options,
-            format_func=lambda x: role_labels[x],
-            index=role_options.index(st.session_state.user_role),
-            key="role_selector",
-            help="**Patient**: Read-only access to your health records\n\n"
-                 "**Doctor**: Full access - can update and delete records",
-            horizontal=True,
-        )
-
-        if selected_role != st.session_state.user_role:
-            logger.info(f"Role changed: {selected_role}")
-            st.session_state.user_role = selected_role
-            st.rerun()
-
-        # Role badge with permissions info
+        # User Role Display (based on authenticated user)
+        st.subheader("👤 Your Permissions")
         if st.session_state.user_role == "doctor":
-            st.success("👨‍⚕️ **Doctor Mode**\n\n✓ View records\n✓ Add new records\n✓ Update records\n✓ Delete records")
+            st.success("👨‍⚕️ **Doctor Access**\n\n✓ View records\n✓ Add new records\n✓ Update records\n✓ Delete records")
         else:
-            st.warning("🧑 **Patient Mode**\n\n✓ View records\n✓ Add new records\n✗ Update records\n✗ Delete records")
+            st.info("🧑 **Patient Access**\n\n✓ View records\n✓ Add new records\n✗ Update records\n✗ Delete records")
 
         st.markdown("---")
 
@@ -775,6 +826,15 @@ def main():
             # Audit log
             with st.expander("📜 Consultation Log"):
                 display_audit_log(st.session_state.patient_id)
+
+        st.markdown("---")
+
+        # Database tools
+        st.subheader("🗄️ Database")
+        if st.button("Open DBeaver", use_container_width=True, help="Open database in DBeaver"):
+            import subprocess
+            subprocess.Popen(["open", "-a", "DBeaver"])
+            st.toast("Opening DBeaver...", icon="🗄️")
 
     # Main content area
     if not st.session_state.patient_id:

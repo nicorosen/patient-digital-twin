@@ -1,0 +1,47 @@
+# Patient Digital Twin - Render Deployment Configuration
+# https://render.com/docs/blueprint-spec
+
+services:
+  # Streamlit Application
+  - type: web
+    name: patient-digital-twin
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /_stcore/health
+    envVars:
+      # Database (use Render PostgreSQL or external)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: patient-twin-db
+          property: connectionString
+
+      # LLM API Keys (set in Render dashboard)
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+
+      # Vector DB
+      - key: CHROMA_PERSIST_DIR
+        value: /app/data/embeddings
+
+      # App settings
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ENVIRONMENT
+        value: production
+
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1
+
+databases:
+  - name: patient-twin-db
+    databaseName: patient_twin
+    user: patient_twin_user
+    plan: free  # Change to starter/standard for production
