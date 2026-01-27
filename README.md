@@ -1,6 +1,6 @@
 # Patient Digital Twin
 
-An AI-powered comprehensive Electronic Health Record (EHR) system that demonstrates **agent-to-agent consultation**, **role-based access control**, and **conversational health data management**.
+An AI-powered comprehensive Electronic Health Record (EHR) system that demonstrates **multi-agent consultation**, **role-based access control**, and **conversational health data management**.
 
 ## Overview
 
@@ -8,31 +8,32 @@ Patient Digital Twin is a proof-of-concept application showcasing:
 
 - **Comprehensive EHR Data Model**: 7 clinical data types with full CRUD operations
 - **Dual AI Agents**: Medical Assistant (clinical) and Health Coach (education/motivation)
-- **Role-Based Access**: Doctor mode (full CRUD) vs Patient mode (read-only)
-- **Conversation Persistence**: Sessions are saved and can be continued later
+- **11 Specialist Agents**: Cardiology, Endocrinology, Neurology, Psychiatry, and more
+- **4 User Roles**: Admin, Doctor, Patient, Caregiver with role-adaptive UI
+- **Authentication System**: Database-backed user auth with cookie-based sessions
+- **Conversation Persistence**: Sessions saved per mode (clinical/coach), resumable later
 - **Agent-to-Agent Consultation**: Medical Assistant consults specialists with de-identified data
 - **Clinical Translation**: Complex medical responses translated to 6th-grade reading level
-- **Semantic Search (RAG)**: Natural language queries over patient health data
+- **Medical Web Search**: Real-time lookup of drug interactions, clinical guidelines, and medical literature via Tavily
+- **Semantic Search (RAG)**: Natural language queries over patient health data via Chroma
 - **Interactive Visualizations**: Health metrics dashboard, medication timeline, severity charts
 
 ## Architecture
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              STREAMLIT UI                                        │
+│                              STREAMLIT UI                                       │
 │  ┌──────────────────┐  ┌─────────────────────────────────────────────────────┐  │
-│  │  Patient Select  │  │             Main Content Area                        │  │
-│  │  Role Toggle     │  │  ┌───────────────────────────────────────────────┐  │  │
-│  │  🩺 Doctor Mode  │  │  │         Health Metrics Dashboard              │  │  │
-│  │  👤 Patient Mode │  │  │ [Conditions] [Medications] [Allergies] [Labs] │  │  │
-│  │                  │  │  └───────────────────────────────────────────────┘  │  │
-│  │  Conversations   │  │  ┌─────────────┬────────────────────────────────┐  │  │
-│  │  [+ New Chat]    │  │  │ 💬 Chat Tab │ 📊 Visualizations Tab          │  │  │
-│  │  • Session 1     │  │  └─────────────┴────────────────────────────────┘  │  │
-│  │  • Session 2     │  │                                                     │  │
-│  │                  │  │  Agent: 🩺 Clinical Mode / 💪 Coaching Mode        │  │
-│  │  Audit Log       │  │                                                     │  │
+│  │  Sidebar          │  │             Main Content Area                       │  │
+│  │  ─────────────── │  │  ┌─────────┬──────────┬─────────┬──────────┐       │  │
+│  │  Patient Select   │  │  │💬 Chat  │📋 Health │📊 Viz   │📜 Audit  │       │  │
+│  │  Agent Toggle     │  │  │         │  Record  │         │  Log*    │       │  │
+│  │  Patient Summary  │  │  └─────────┴──────────┴─────────┴──────────┘       │  │
+│  │  Conversations    │  │                                                     │  │
+│  │  Access Mgmt*     │  │  Quick Actions (chips) → Chat Messages → Input     │  │
+│  │  LLM Settings     │  │                                                     │  │
 │  └──────────────────┘  └─────────────────────────────────────────────────────┘  │
+│  * Role-dependent                                                               │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                          │
               ┌──────────────────────────┴──────────────────────────┐
@@ -40,37 +41,85 @@ Patient Digital Twin is a proof-of-concept application showcasing:
 ┌──────────────────────────────────────┐    ┌──────────────────────────────────────┐
 │     MEDICAL ASSISTANT AGENT          │    │       HEALTH COACH AGENT             │
 │  ┌────────────────────────────────┐  │    │  ┌────────────────────────────────┐  │
-│  │ Full CRUD Tools (30 total):   │  │    │  │ Read-Only Tools:               │  │
-│  │                                │  │    │  │ • get_patient_profile          │  │
-│  │ GET: 8 tools (profile, 7 types)│  │    │  │ • get_* (7 data types)        │  │
-│  │ ADD: 7 tools (one per type)   │  │    │  │ • search_patient_data          │  │
-│  │ UPDATE: 7 tools               │  │    │  │ • search_clinical_history      │  │
-│  │ DELETE: 7 tools               │  │    │  │                                │  │
-│  │ SEARCH: 2 tools               │  │    │  │ Purpose:                       │  │
-│  │ CONSULT: 1 tool               │  │    │  │ • Health education             │  │
+│  │ Full CRUD Tools:              │  │    │  │ Read-Only Tools:               │  │
+│  │ GET: 8 tools (profile + 7)   │  │    │  │ • get_patient_profile          │  │
+│  │ ADD: 7 tools (one per type)  │  │    │  │ • get_* (7 data types)        │  │
+│  │ UPDATE: 7 tools              │  │    │  │ • search_patient_data          │  │
+│  │ DELETE: 7 tools              │  │    │  │ • search_clinical_history      │  │
+│  │ SEARCH: 2 tools              │  │    │  │                                │  │
+│  │ CONSULT: 11 specialists      │  │    │  │ Purpose:                       │  │
+│  │ WEB: 1 tool (Tavily search) │  │    │  │ • Health education             │  │
 │  └────────────────────────────────┘  │    │  │ • Lifestyle guidance           │  │
 └──────────────────────────────────────┘    │  │ • Motivation support           │  │
-          │                   │              │  └────────────────────────────────┘  │
-          ▼                   ▼              └──────────────────────────────────────┘
-┌──────────────────┐  ┌──────────────────┐
-│  PRIMARY CARE    │  │  TRANSLATION     │
-│  SPECIALIST      │  │  LAYER           │
-│                  │  │                  │
-│ De-identified    │  │ Clinical → Plain │
-│ context only     │  │ language (6th    │
-│                  │  │ grade reading)   │
-└──────────────────┘  └──────────────────┘
-              │                   │
-              └─────────┬─────────┘
-                        ▼
-         ┌──────────────────────────────┐
-         │  DATA LAYER                  │
-         │  ┌────────────┐ ┌─────────┐  │
-         │  │ PostgreSQL │ │ Chroma  │  │
-         │  │ (Records)  │ │ (RAG)   │  │
-         │  └────────────┘ └─────────┘  │
-         └──────────────────────────────┘
+          ▼                                 │  └────────────────────────────────┘  │
+┌──────────────────────────────────┐       └──────────────────────────────────────┘
+│  SPECIALIST AGENTS (11)          │
+│  Cardiology, Endocrinology,      │
+│  Pulmonology, Neurology,         │
+│  Gastroenterology, Oncology,     │
+│  Psychiatry, Orthopedics,        │
+│  Nephrology, Dermatology,        │
+│  Primary Care                    │
+│                                  │
+│  + Medical Board (multi-consult) │
+│  De-identified context only      │
+│  Structured responses with       │
+│  assessment, recommendations,    │
+│  red flags, guidelines           │
+└──────────────────────────────────┘
+              │
+              ▼
+┌──────────────────────────────┐
+│  DATA LAYER                  │
+│  ┌────────────┐ ┌─────────┐ │
+│  │ PostgreSQL │ │ Chroma  │ │
+│  │ (Records)  │ │ (RAG)   │ │
+│  └────────────┘ └─────────┘ │
+└──────────────────────────────┘
 ```
+
+## User Roles & Permissions
+
+The system supports 4 user roles with role-adaptive UI:
+
+| Capability | Admin | Doctor | Patient | Caregiver |
+| ---------- | ----- | ------ | ------- | --------- |
+| View patients | All | Assigned | Own only | Assigned |
+| Patient selector | Shown | Shown | Hidden (single) | Shown |
+| Add/edit records | Yes | Yes | Yes | No |
+| Delete records | Yes | Yes | No | No |
+| Agent selector | Both agents | Medical only | Both agents | Medical only |
+| Access management | Yes | Yes | No | Yes |
+| Audit Log tab | Yes | Yes | No | No |
+| Health Record tab | Yes | Yes | Yes (read-only) | Yes (read-only) |
+
+### Demo Credentials
+
+| User | Password | Role |
+| ---- | -------- | ---- |
+| `admin` | `admin123` | Admin |
+| `drsmith` | `doctor123` | Doctor |
+| `maria` | `patient123` | Patient |
+| `jamescaregiver` | `caregiver123` | Caregiver |
+
+## UI Layout
+
+### Sidebar (compact, role-filtered)
+
+- **Header**: User name, role badge, logout
+- **Patient selector**: Dropdown (hidden when single patient)
+- **Agent toggle**: Horizontal radio (hidden when role has one agent)
+- **Patient summary**: Compact card (age, gender, condition/med/allergy counts)
+- **Conversations**: Session list with new/rename/delete
+- **Access Management**: Expander (admin/doctor/caregiver only)
+- **LLM Settings**: Collapsed expander (provider + model selection)
+
+### Main Area (tabbed)
+
+- **Chat** (default): Quick action chips (shown when no messages) + chat messages + input
+- **Health Record**: Full patient profile — demographics, conditions, medications, allergies, vital signs, lab results, family history, social history
+- **Visualizations**: Metrics dashboard, severity chart, consultation history, medication timeline
+- **Audit Log** (admin/doctor only): Specialist consultation history with expandable details
 
 ## Data Model
 
@@ -86,17 +135,22 @@ Patient Digital Twin is a proof-of-concept application showcasing:
 | **Family History** | `FamilyHistory` | Genetic risk factors | relation, condition_name, onset_age |
 | **Social History** | `SocialHistory` | Lifestyle factors | category, status, description |
 
-### Conversation System
+### System Models
 
 | Model | Description |
 | ----- | ----------- |
-| `ConversationSession` | Persistent chat sessions with title, mode (clinical/coach), active status |
-| `ConversationMessage` | Individual messages with role, content, metadata, session linkage |
+| `User` | Authenticated users with role (admin/doctor/patient/caregiver) |
+| `Patient` | Patient demographics (name, DOB, gender) |
+| `PatientMember` | User-to-patient access mapping (composite key) |
+| `ConversationSession` | Persistent chat sessions with title, mode (clinical/coach) |
+| `ConversationMessage` | Individual messages with role, content, session linkage |
 | `ConsultationAuditLog` | Audit trail for specialist consultations |
 
 ### Entity Relationship
 
 ```text
+User (1) ──────────── (N) PatientMember (N) ──────────── (1) Patient
+                                                              │
 Patient (1) ──────┬────── (N) Condition
                   ├────── (N) Medication
                   ├────── (N) Allergy
@@ -104,117 +158,59 @@ Patient (1) ──────┬────── (N) Condition
                   ├────── (N) LabResult
                   ├────── (N) FamilyHistory
                   ├────── (N) SocialHistory
-                  └────── (N) ConversationSession ──── (N) ConversationMessage
+                  ├────── (N) ConversationSession ──── (N) ConversationMessage
+                  └────── (N) ConsultationAuditLog
 ```
 
-## Agent Tools (32 Total)
+## Agent Tools
 
-### Getter Tools (10)
+### Medical Assistant Tools
 
-| Tool | Description | Returns |
-| ---- | ----------- | ------- |
-| `get_patient_profile` | Complete health profile | Demographics, all conditions, meds, allergies |
-| `get_conditions` | All conditions with IDs | Condition list with UUIDs for update/delete |
-| `get_medications` | All medications with IDs | Medication list with UUIDs |
-| `get_allergies` | All allergies with IDs | Allergy list with UUIDs |
-| `get_vital_signs` | Recent vitals with IDs | Vital signs with timestamps and UUIDs |
-| `get_lab_results` | Lab results with IDs | Lab results with UUIDs |
-| `get_family_history` | Family history with IDs | Family history entries with UUIDs |
-| `get_social_history` | Social history with IDs | Lifestyle factors with UUIDs |
-| `search_patient_data` | RAG semantic search | Relevant health data matching query |
-| `search_clinical_history` | Search past conversations | Context from clinical sessions |
+| Category | Count | Description |
+| -------- | ----- | ----------- |
+| Getter | 10 | Profile, 7 data types, 2 search tools |
+| Add | 7 | One per clinical data type |
+| Update | 7 | One per clinical data type (doctor role) |
+| Delete | 7 | One per clinical data type (doctor role) |
+| Consultation | 12 | 11 specialists + medical board (multi-consult) |
+| Web Search | 1 | Medical web search via Tavily (drug interactions, guidelines, literature) |
 
-### Add Tools (7)
-
-| Tool | Description | Key Parameters |
-| ---- | ----------- | -------------- |
-| `add_condition` | Add diagnosis | display_name, clinical_status, severity |
-| `add_medication` | Add prescription | display_name, dosage, frequency, route |
-| `add_allergy` | Add allergy | substance, category, criticality |
-| `add_vital_signs` | Record vitals | systolic_bp, diastolic_bp, heart_rate |
-| `add_lab_result` | Add lab result | test_name, value, unit, interpretation |
-| `add_family_history` | Add family condition | relationship, condition_name |
-| `add_social_history` | Add lifestyle factor | category, status, description |
-
-### Update Tools (7)
-
-| Tool | Description | Required |
-| ---- | ----------- | -------- |
-| `update_condition` | Modify condition | condition_id (from get_conditions) |
-| `update_medication` | Modify medication | medication_id |
-| `update_allergy` | Modify allergy | allergy_id |
-| `update_vital_signs` | Modify vitals | vital_signs_id |
-| `update_lab_result` | Modify lab result | lab_result_id |
-| `update_family_history` | Modify family history | family_history_id |
-| `update_social_history` | Modify social history | social_history_id |
-
-### Delete Tools (7)
-
-| Tool | Description | Required |
-| ---- | ----------- | -------- |
-| `delete_condition` | Remove condition | condition_id |
-| `delete_medication` | Remove medication | medication_id |
-| `delete_allergy` | Remove allergy | allergy_id |
-| `delete_vital_signs` | Remove vitals | vital_signs_id |
-| `delete_lab_result` | Remove lab result | lab_result_id |
-| `delete_family_history` | Remove family history | family_history_id |
-| `delete_social_history` | Remove social history | social_history_id |
-
-### Consultation Tool (1)
+### Health Coach Tools (read-only)
 
 | Tool | Description |
 | ---- | ----------- |
-| `consult_primary_care` | Consult specialist with de-identified patient context |
+| `get_patient_profile` | Complete health profile |
+| `get_*` (7 tools) | Each clinical data type |
+| `search_patient_data` | RAG semantic search |
+| `search_clinical_history` | Search past clinical conversations |
 
-## Role-Based Access Control
+### Specialist Agents (11)
 
-### Doctor Mode (🩺)
+| Specialist | Focus Areas |
+| ---------- | ----------- |
+| Primary Care | General medicine, preventive care, chronic disease |
+| Cardiology | Chest pain, heart failure, arrhythmias, hypertension |
+| Endocrinology | Diabetes, thyroid, hormonal disorders |
+| Pulmonology | Asthma, COPD, shortness of breath, sleep apnea |
+| Neurology | Headaches, seizures, dizziness, memory concerns |
+| Gastroenterology | Acid reflux, IBS, IBD, liver disease |
+| Oncology | Cancer screening, suspicious symptoms |
+| Psychiatry | Depression, anxiety, mood changes, sleep |
+| Orthopedics | Joint pain, arthritis, back pain, fractures |
+| Nephrology | Kidney disease, electrolyte imbalances |
+| Dermatology | Rashes, eczema, psoriasis, skin lesions |
 
-- Full read/write access to all patient data
-- Can add, update, and delete clinical records
-- Access to specialist consultation tool
-- Suitable for clinical documentation
-
-### Patient Mode (👤)
-
-- Read-only access to health data
-- Cannot modify clinical records
-- Can view all their health information
-- Suitable for patient portal experience
-
-| Capability | Doctor Mode | Patient Mode |
-| ---------- | ----------- | ------------ |
-| View data | Yes | Yes |
-| Add records | Yes | No |
-| Update records | Yes | No |
-| Delete records | Yes | No |
-| Consult specialist | Yes | No |
-
-## Conversation Persistence
-
-### Session Management
-
-- **Auto-create**: New session created on first message
-- **Auto-save**: Messages saved to database immediately
-- **Title generation**: Auto-generated from first message
-- **Mode separation**: Clinical and Coach conversations stored separately
-- **Continue later**: Click session in sidebar to resume
-
-### Session States
-
-| State | Description |
-| ----- | ----------- |
-| `active` | Current conversation, shown in sidebar |
-| `inactive` | Archived, can be reactivated |
+All specialists return structured responses with: assessment, recommendations (with priority), red flags, guidelines referenced, and confidence level.
 
 ## Semantic Search (RAG)
 
 ### How It Works
 
 1. All patient data is indexed in Chroma vector store
-2. Documents are embedded using `all-MiniLM-L6-v2` sentence transformer
+2. Documents are embedded using Anthropic embeddings
 3. Natural language queries find semantically similar content
 4. Results are filtered by patient_id for privacy
+5. Clinical conversation messages are indexed for Health Coach cross-mode access
 
 ### Indexed Document Types
 
@@ -226,14 +222,14 @@ Patient (1) ──────┬────── (N) Condition
 - Lab results (with interpretations)
 - Family history
 - Social history
-- Clinical conversation summaries
+- Clinical conversation summaries (assistant responses)
 
 ## Privacy and De-identification
 
 ### Specialist Consultation Data Flow
 
 ```text
-Patient Data → De-identification → Specialist → Translation → Patient Response
+Patient Data → De-identification → Specialist → Structured Response → Translation → Patient
 ```
 
 **Included (De-identified):**
@@ -252,18 +248,19 @@ Patient Data → De-identification → Specialist → Translation → Patient Re
 - Contact information
 - Specific dates (converted to relative timeframes)
 
-All consultations logged in `ConsultationAuditLog` for transparency.
+All consultations logged in `ConsultationAuditLog` for transparency and compliance.
 
 ## Technology Stack
 
 | Component | Technology | Purpose |
 | --------- | ---------- | ------- |
-| LLM | Claude / GPT-4 / Gemini | Agent intelligence |
+| LLM | Gemini 2.5 Pro / Claude Opus 4.5 / OpenAI o3 | Agent intelligence |
 | Agent Framework | LangChain | Tool orchestration |
 | Database | PostgreSQL | Structured health data |
 | Vector Store | Chroma | Semantic search |
-| Embeddings | sentence-transformers | Document embeddings |
+| Embeddings | Anthropic API | Document embeddings |
 | Frontend | Streamlit | Chat interface |
+| Authentication | streamlit-authenticator + bcrypt | User auth |
 | Visualizations | Plotly | Interactive charts |
 | Validation | Pydantic | Schema validation |
 | ORM | SQLAlchemy | Database models |
@@ -308,9 +305,12 @@ All consultations logged in `ConsultationAuditLog` for transparency.
 
    ```env
    # Only the key for your provider is required
-   GOOGLE_API_KEY=AIza...        # For Google Gemini (default)
-   # ANTHROPIC_API_KEY=sk-ant-... # For Anthropic Claude
-   # OPENAI_API_KEY=sk-...        # For OpenAI GPT-4
+   GOOGLE_API_KEY=AIza...          # For Google Gemini (default)
+   # ANTHROPIC_API_KEY=sk-ant-...  # For Anthropic Claude
+   # OPENAI_API_KEY=sk-...         # For OpenAI
+
+   # Optional: Web search for medical information
+   # TAVILY_API_KEY=tvly-...       # Get one at https://tavily.com
    ```
 
 5. **Create PostgreSQL database**
@@ -324,26 +324,28 @@ All consultations logged in `ConsultationAuditLog` for transparency.
 ### Quick Start
 
 ```bash
-# Seed database and start with Google Gemini (default)
+# Seed database and start with Anthropic Claude (default)
 python run.py --seed --index
 
 # Or use a different LLM provider
-python run.py --llm anthropic                    # Use Claude
-python run.py --llm openai --model gpt-4o        # Use GPT-4o
-python run.py --llm google --model gemini-2.0-flash  # Use Gemini Flash
+python run.py --llm google --model gemini-2.5-pro              # Use Gemini (default)
+python run.py --llm anthropic --model claude-opus-4-5-20251101 # Use Claude Opus 4.5
+python run.py --llm openai --model o3                          # Use OpenAI o3
 ```
 
 ### LLM Providers
 
+Only high-reasoning models are supported. Flash and lightweight models have been removed.
+
 | Provider | Default Model | Other Models |
 | -------- | ------------- | ------------ |
-| `google` | `gemini-2.5-pro` | `gemini-2.0-flash`, `gemini-1.5-pro` |
-| `anthropic` | `claude-sonnet-4-20250514` | `claude-opus-4-20250514` |
-| `openai` | `gpt-4o` | `gpt-4-turbo`, `gpt-4o-mini` |
+| `google` | `gemini-2.5-pro` | — |
+| `anthropic` | `claude-opus-4-5-20251101` | `claude-sonnet-4-20250514` |
+| `openai` | `o3` | `gpt-4.1` |
 
 ### Step-by-Step
 
-1. **Seed the database** (creates 3 synthetic patients)
+1. **Seed the database** (creates demo users + 3 synthetic patients)
 
    ```bash
    python -m src.database.seed
@@ -365,6 +367,8 @@ python run.py --llm google --model gemini-2.0-flash  # Use Gemini Flash
 
    Navigate to `http://localhost:8501`
 
+5. **Login** with one of the demo credentials (see table above)
+
 ## Project Structure
 
 ```text
@@ -378,12 +382,16 @@ patient-digital-twin/
 │   │   ├── __init__.py
 │   │   ├── fhir.py              # Core FHIR-inspired schemas
 │   │   ├── clinical_extended.py # VitalSigns, LabResult, Family/Social history
+│   │   ├── user.py              # User and PatientMember schemas
+│   │   ├── patient_member.py    # Patient-user association schemas
 │   │   └── conversation.py      # Session and message schemas
 │   │
 │   ├── models/                   # SQLAlchemy ORM models
 │   │   ├── __init__.py
 │   │   ├── base.py              # Base model with UUID, timestamps
 │   │   ├── patient.py           # Patient model
+│   │   ├── user.py              # User model with roles
+│   │   ├── patient_member.py    # User-patient access mapping
 │   │   ├── clinical.py          # Condition, Medication, Allergy
 │   │   ├── clinical_extended.py # VitalSigns, LabResult, Family/Social
 │   │   └── conversation.py      # Session, Message, AuditLog
@@ -391,31 +399,44 @@ patient-digital-twin/
 │   ├── database/                 # Data access layer
 │   │   ├── __init__.py
 │   │   ├── connection.py        # PostgreSQL connection
-│   │   ├── repositories.py      # CRUD operations (all 7 types)
-│   │   └── seed.py              # Synthetic patient data
+│   │   ├── repositories.py      # CRUD operations (all types + users)
+│   │   └── seed.py              # Synthetic patient + user data
 │   │
 │   ├── rag/                      # RAG system
 │   │   ├── __init__.py
-│   │   ├── embeddings.py        # Sentence-transformer embeddings
+│   │   ├── embeddings.py        # Anthropic embeddings
 │   │   ├── vectorstore.py       # Chroma vector store
 │   │   └── retriever.py         # Search, indexing, delete
 │   │
 │   ├── agents/                   # AI agents
 │   │   ├── __init__.py
-│   │   ├── medical_assistant.py # Clinical agent (full CRUD)
-│   │   ├── health_coach.py      # Education agent (read-only)
-│   │   ├── primary_care.py      # Specialist agent
+│   │   ├── medical_assistant.py # Clinical agent (full CRUD + consult)
+│   │   ├── health_coach.py      # Education agent (read-only + RAG)
 │   │   ├── translation.py       # Clinical to plain language
-│   │   └── tools/               # Agent tools (32 total)
+│   │   ├── specialists/         # 11 specialist agents
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py          # BaseSpecialist with structured output
+│   │   │   ├── cardiology.py
+│   │   │   ├── endocrinology.py
+│   │   │   ├── pulmonology.py
+│   │   │   ├── neurology.py
+│   │   │   ├── gastroenterology.py
+│   │   │   ├── oncology.py
+│   │   │   ├── psychiatry.py
+│   │   │   ├── orthopedics.py
+│   │   │   ├── nephrology.py
+│   │   │   └── dermatology.py
+│   │   └── tools/               # Agent tools
 │   │       ├── __init__.py
 │   │       ├── patient_data.py  # All CRUD tools
-│   │       └── consultation.py  # Specialist consultation
+│   │       ├── consultation.py  # Specialist consultation tools (12)
+│   │       └── web_search.py   # Medical web search via Tavily
 │   │
 │   └── app/                      # Streamlit application
 │       ├── __init__.py
-│       └── streamlit_app.py     # Main UI with role toggle
+│       └── streamlit_app.py     # Main UI with role-adaptive layout
 │
-├── tests/                        # Test suite (197 tests)
+├── tests/                        # Test suite
 │   ├── conftest.py              # Test fixtures
 │   ├── test_models.py           # Model tests
 │   ├── test_repositories.py     # Repository tests
@@ -429,6 +450,10 @@ patient-digital-twin/
 ├── data/
 │   ├── synthetic/               # Synthetic data files
 │   └── embeddings/              # Chroma persistence
+│
+├── .streamlit/
+│   ├── config.toml              # Streamlit theme and server config
+│   └── secrets.toml             # Auth cookies and credentials
 │
 ├── .env.example                  # Environment template
 ├── requirements.txt              # Python dependencies
@@ -456,59 +481,38 @@ Each patient also has:
 
 ## Example Interactions
 
-### Doctor Mode - Adding Data
+### Medical Assistant - Adding Data (Doctor/Admin)
 
 ```text
 Doctor: "Add a new condition: hypothyroidism, diagnosed today"
 Assistant: "Added hypothyroidism [active] to the patient record."
 ```
 
-### Doctor Mode - Updating Data
-
-```text
-Doctor: "Show conditions"
-Assistant: "## Patient Conditions (3 total)
-- High Cholesterol [active]
-  ID: e567962c-d584-4048-b6d5-1628f803a429
-..."
-
-Doctor: "Mark the high cholesterol condition as resolved"
-Assistant: "Updated condition e567962c... to resolved status."
-```
-
-### Doctor Mode - Deleting Data
-
-```text
-Doctor: "Delete the high cholesterol condition"
-Assistant: "Deleted condition: High Cholesterol"
-```
-
-### Patient Mode - Asking Questions
-
-```text
-Patient: "What medications am I taking?"
-Assistant: "You are currently taking:
-1. Metformin 500mg twice daily - For managing your diabetes
-2. Lisinopril 10mg once daily - For blood pressure control"
-```
-
-### Specialist Consultation
+### Medical Assistant - Specialist Consultation
 
 ```text
 Patient: "I have been having dizziness when I stand up. Should I be worried?"
-Assistant: "I will consult with a Primary Care specialist...
+Assistant: "I'll consult with a specialist about your symptoms...
 
-[Consulting specialist with de-identified data...]
+[Consulting Cardiology with de-identified data...]
 
 Based on the specialist assessment:
 
-**Main Finding:** Dizziness when standing (orthostatic hypotension) can be
+**Assessment:** Dizziness when standing (orthostatic hypotension) can be
 a side effect of Lisinopril, your blood pressure medication.
 
 **Recommendations:**
-- Rise slowly from sitting or lying positions
-- Stay well hydrated
-- Mention this to your doctor at your next visit"
+🟡 [ROUTINE] Rise slowly from sitting or lying positions
+🟡 [ROUTINE] Stay well hydrated
+🟠 [HIGH] Mention this to your doctor at your next visit"
+```
+
+### Health Coach - Lifestyle Guidance
+
+```text
+Patient: "What diet changes would help with my conditions?"
+Coach: "Great question! With your Type 2 Diabetes and Hypertension,
+here are some dietary changes that can make a real difference..."
 ```
 
 ## Development
@@ -518,8 +522,6 @@ a side effect of Lisinopril, your blood pressure medication.
 ```bash
 pytest tests/ -v
 ```
-
-All 197 tests should pass.
 
 ### Code Formatting
 
@@ -603,14 +605,12 @@ createdb patient_twin
 ### Missing API key
 
 ```bash
-echo $GOOGLE_API_KEY  # or ANTHROPIC_API_KEY, OPENAI_API_KEY
+echo $ANTHROPIC_API_KEY  # or GOOGLE_API_KEY, OPENAI_API_KEY
 ```
 
-### Embedding model download
+### Embedding issues
 
-```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-```
+Ensure your Anthropic API key is set — embeddings use the Anthropic API.
 
 ## License
 

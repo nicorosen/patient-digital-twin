@@ -7,7 +7,25 @@ Includes:
 - RAG search tools
 """
 
-from src.agents.tools.consultation import CONSULTATION_TOOLS, consult_primary_care
+from src.agents.tools.web_search import (
+    WEB_SEARCH_TOOLS,
+    search_medical_web,
+)
+from src.agents.tools.consultation import (
+    CONSULTATION_TOOLS,
+    consult_primary_care,
+    consult_cardiology,
+    consult_endocrinology,
+    consult_pulmonology,
+    consult_neurology,
+    consult_gastroenterology,
+    consult_oncology,
+    consult_psychiatry,
+    consult_orthopedics,
+    consult_nephrology,
+    consult_dermatology,
+    consult_medical_board,
+)
 from src.agents.tools.patient_data import (
     HEALTH_COACH_TOOLS,
     PATIENT_DATA_TOOLS,
@@ -49,7 +67,7 @@ from src.agents.tools.patient_data import (
 )
 
 # All tools available to the Medical Assistant
-ALL_TOOLS = PATIENT_DATA_TOOLS + CONSULTATION_TOOLS
+ALL_TOOLS = PATIENT_DATA_TOOLS + CONSULTATION_TOOLS + WEB_SEARCH_TOOLS
 
 __all__ = [
     # Patient data tools - getters
@@ -90,7 +108,21 @@ __all__ = [
     "PATIENT_DATA_TOOLS",
     # Consultation tools
     "consult_primary_care",
+    "consult_cardiology",
+    "consult_endocrinology",
+    "consult_pulmonology",
+    "consult_neurology",
+    "consult_gastroenterology",
+    "consult_oncology",
+    "consult_psychiatry",
+    "consult_orthopedics",
+    "consult_nephrology",
+    "consult_dermatology",
+    "consult_medical_board",
     "CONSULTATION_TOOLS",
+    # Web search tools
+    "search_medical_web",
+    "WEB_SEARCH_TOOLS",
     # Combined
     "ALL_TOOLS",
     # Health Coach tools (read-only with clinical history access)

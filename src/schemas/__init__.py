@@ -87,16 +87,14 @@ from src.schemas.conversation import (
 from src.schemas.user import (
     UserBase,
     UserCreate,
+    UserRole,
     UserSchema,
     UserSummary,
     UserUpdate,
 )
 from src.schemas.patient_member import (
-    MemberRole,
-    PatientMemberBase,
     PatientMemberCreate,
     PatientMemberSchema,
-    PatientMemberUpdate,
     PatientMemberWithUser,
 )
 
@@ -169,14 +167,12 @@ __all__ = [
     # User
     "UserBase",
     "UserCreate",
+    "UserRole",
     "UserUpdate",
     "UserSchema",
     "UserSummary",
     # PatientMember
-    "MemberRole",
-    "PatientMemberBase",
     "PatientMemberCreate",
-    "PatientMemberUpdate",
     "PatientMemberSchema",
     "PatientMemberWithUser",
 ]

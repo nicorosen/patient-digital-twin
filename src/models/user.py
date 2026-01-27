@@ -4,6 +4,7 @@ User model for authentication and authorization.
 Stores user credentials and profile information.
 """
 
+from enum import Enum
 from typing import TYPE_CHECKING, List
 
 from sqlalchemy import Boolean, String
@@ -13,6 +14,15 @@ from src.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from src.models.patient_member import PatientMember
+
+
+class UserRole(str, Enum):
+    """Roles for user access control."""
+
+    ADMIN = "admin"
+    DOCTOR = "doctor"
+    PATIENT = "patient"
+    CAREGIVER = "caregiver"
 
 
 class User(Base, UUIDMixin, TimestampMixin):
@@ -25,6 +35,7 @@ class User(Base, UUIDMixin, TimestampMixin):
         email: Unique email address
         hashed_password: Bcrypt hashed password
         name: Display name
+        role: User role (admin, doctor, patient, caregiver)
         is_active: Whether the user account is active
         created_at: When the record was created
         updated_at: When the record was last updated
@@ -36,6 +47,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default=UserRole.PATIENT.value)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Relationship to patient memberships

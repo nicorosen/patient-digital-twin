@@ -6,10 +6,18 @@ All settings are validated on application startup.
 """
 
 from functools import lru_cache
-from typing import Optional
+from typing import Dict, List, Optional
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# High-reasoning models only — no Flash models
+SUPPORTED_MODELS: Dict[str, List[str]] = {
+    "google": ["gemini-2.5-pro"],
+    "anthropic": ["claude-opus-4-5-20251101", "claude-sonnet-4-20250514"],
+    "openai": ["o3", "gpt-4.1"],
+}
 
 
 class Settings(BaseSettings):
@@ -48,6 +56,9 @@ class Settings(BaseSettings):
     # Model Configuration
     model_name: str = "gemini-2.5-pro"
     max_tokens: int = 4096
+
+    # Web Search (Tavily)
+    tavily_api_key: Optional[str] = None
 
     # Vector DB (Chroma)
     chroma_persist_dir: str = "./data/embeddings"

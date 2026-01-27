@@ -934,6 +934,7 @@ class UserRepository:
             email=user_data.email,
             hashed_password=hash_password(user_data.password),
             name=user_data.name,
+            role=user_data.role.value if hasattr(user_data.role, 'value') else user_data.role,
             is_active=True,
         )
         db.add(user)
@@ -982,7 +983,6 @@ class PatientMemberRepository:
         return (
             db.query(PatientMember)
             .filter(PatientMember.patient_id == patient_id)
-            .order_by(PatientMember.role)
             .all()
         )
 
@@ -1017,21 +1017,8 @@ class PatientMemberRepository:
         member = PatientMember(
             user_id=member_data.user_id,
             patient_id=member_data.patient_id,
-            role=member_data.role.value,
         )
         db.add(member)
-        db.flush()
-        return member
-
-    @staticmethod
-    def update_role(
-        db: Session, user_id: UUID, patient_id: UUID, new_role: str
-    ) -> Optional[PatientMember]:
-        """Update a member's role."""
-        member = PatientMemberRepository.get_membership(db, user_id, patient_id)
-        if not member:
-            return None
-        member.role = new_role
         db.flush()
         return member
 
@@ -1049,9 +1036,3 @@ class PatientMemberRepository:
     def is_member(db: Session, user_id: UUID, patient_id: UUID) -> bool:
         """Check if a user is a member of a patient."""
         return PatientMemberRepository.get_membership(db, user_id, patient_id) is not None
-
-    @staticmethod
-    def get_user_role(db: Session, user_id: UUID, patient_id: UUID) -> Optional[str]:
-        """Get a user's role for a patient, or None if not a member."""
-        member = PatientMemberRepository.get_membership(db, user_id, patient_id)
-        return member.role if member else None

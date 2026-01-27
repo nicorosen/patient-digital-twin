@@ -4,17 +4,19 @@ AI agents for patient health management.
 Contains:
 - Medical Assistant: Patient-facing agent for data gathering and queries
 - Health Coach: Consumer-friendly agent for education and motivation
-- Primary Care Specialist: Clinical consultation agent
+- Specialist agents: Clinical consultation agents (full medical board)
 - Agent tools for data access and specialist consultation
 - Translation layer for clinical to patient-friendly language
 """
 
 from src.agents.health_coach import HealthCoach
 from src.agents.medical_assistant import MedicalAssistant
-from src.agents.primary_care import (
+from src.agents.specialists import (
+    BaseSpecialist,
     PrimaryCareSpecialist,
     SpecialistResponse,
-    get_primary_care_specialist,
+    SPECIALIST_REGISTRY,
+    get_specialist,
 )
 from src.agents.tools import (
     ALL_TOOLS,
@@ -25,6 +27,17 @@ from src.agents.tools import (
     add_condition,
     add_medication,
     consult_primary_care,
+    consult_cardiology,
+    consult_endocrinology,
+    consult_pulmonology,
+    consult_neurology,
+    consult_gastroenterology,
+    consult_oncology,
+    consult_psychiatry,
+    consult_orthopedics,
+    consult_nephrology,
+    consult_dermatology,
+    consult_medical_board,
     get_patient_profile,
     search_patient_data,
 )
@@ -37,9 +50,11 @@ __all__ = [
     # Agents
     "MedicalAssistant",
     "HealthCoach",
+    "BaseSpecialist",
     "PrimaryCareSpecialist",
-    "get_primary_care_specialist",
     "SpecialistResponse",
+    "SPECIALIST_REGISTRY",
+    "get_specialist",
     # Translation
     "translate_specialist_response",
     "atranslate_specialist_response",
@@ -54,4 +69,15 @@ __all__ = [
     "add_medication",
     "add_allergy",
     "consult_primary_care",
+    "consult_cardiology",
+    "consult_endocrinology",
+    "consult_pulmonology",
+    "consult_neurology",
+    "consult_gastroenterology",
+    "consult_oncology",
+    "consult_psychiatry",
+    "consult_orthopedics",
+    "consult_nephrology",
+    "consult_dermatology",
+    "consult_medical_board",
 ]

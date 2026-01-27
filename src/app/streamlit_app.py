@@ -36,7 +36,7 @@ from src.database.repositories import (
     PatientRepository,
     UserRepository,
 )
-from src.schemas import MemberRole
+from src.schemas import UserRole
 from src.logging_config import get_logger, setup_logging
 
 # Initialize logging at app startup
@@ -88,31 +88,35 @@ def get_authenticator():
     return authenticator
 
 
-def get_user_from_db(username: str):
-    """Get user object from database by username."""
+def get_user_from_db(username: str) -> dict | None:
+    """Get user info from database by username.
+
+    Returns a dict with user data to avoid detached instance issues.
+    """
     try:
         with get_db() as db:
-            return UserRepository.get_by_username(db, username)
+            user = UserRepository.get_by_username(db, username)
+            if user:
+                return {
+                    "id": str(user.id),
+                    "username": user.username,
+                    "name": user.name,
+                    "email": user.email,
+                    "role": user.role,
+                    "is_active": user.is_active,
+                }
+            return None
     except Exception:
         return None
 
 
-def get_user_role_for_patient(user_id, patient_id) -> str:
-    """Get the user's role for a specific patient."""
-    if not user_id or not patient_id:
-        return "patient"  # Default fallback
-    try:
-        from uuid import UUID
-        with get_db() as db:
-            role = PatientMemberRepository.get_user_role(
-                db,
-                UUID(str(user_id)),
-                UUID(str(patient_id))
-            )
-            return role if role else "patient"
-    except Exception as e:
-        logger.warning(f"Could not get user role for patient: {e}")
-        return "patient"
+# Agent access based on user role
+AGENT_ACCESS = {
+    "admin": ["Medical Assistant", "Health Coach"],
+    "doctor": ["Medical Assistant"],
+    "patient": ["Medical Assistant", "Health Coach"],
+    "caregiver": ["Medical Assistant"],
+}
 
 
 def ensure_patients_indexed():
@@ -143,6 +147,79 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# --- Custom CSS enhancements (theme-agnostic, works with Streamlit's built-in light/dark) ---
+CUSTOM_CSS = """
+<style>
+/* Chat messages */
+div[data-testid="stChatMessage"] {
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.8rem;
+}
+
+/* Chat input */
+.stChatInput > div {
+    border-radius: 12px !important;
+}
+
+/* Metric cards */
+div[data-testid="stMetric"] {
+    border-radius: 10px;
+    padding: 1rem;
+}
+
+/* Buttons */
+.stButton > button {
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px 8px 0 0;
+    padding: 8px 16px;
+}
+
+/* Expanders */
+.streamlit-expanderHeader {
+    border-radius: 8px;
+}
+
+/* Selectbox and inputs */
+.stSelectbox > div > div,
+.stTextInput > div > div {
+    border-radius: 8px;
+}
+
+/* Radio buttons */
+.stRadio > div {
+    border-radius: 8px;
+    padding: 0.5rem;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+}
+
+/* Alert boxes */
+.stAlert {
+    border-radius: 10px;
+}
+</style>
+"""
+
+
+def apply_theme():
+    """Apply custom CSS enhancements."""
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 def init_session_state():
@@ -192,7 +269,9 @@ LLM_PROVIDER_MODELS = {
 
 def get_conversation_mode():
     """Get conversation mode from agent type."""
-    return "coach" if st.session_state.agent_type == "Health Coach" else "clinical"
+    if st.session_state.agent_type == "Health Coach":
+        return "coach"
+    return "clinical"
 
 
 def generate_session_title(first_message: str) -> str:
@@ -422,8 +501,27 @@ def display_conversation_sidebar():
                     st.rerun()
 
 
-def display_patient_profile(patient_id):
-    """Display patient profile in sidebar."""
+def display_patient_summary_card(patient_id):
+    """Display compact patient summary card in sidebar."""
+    with get_db() as db:
+        profile = PatientRepository.get_profile(db, patient_id)
+        if not profile:
+            return
+
+        patient = profile.patient
+        active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+        active_meds = [m for m in profile.medications if m.status == "active"]
+
+        st.markdown(
+            f"**{patient.age}y** {patient.gender.value.capitalize()} · "
+            f"{len(active_conditions)} conditions · "
+            f"{len(active_meds)} meds · "
+            f"{len(profile.allergies)} allergies"
+        )
+
+
+def display_health_record_tab(patient_id):
+    """Display full health record in main content area."""
     with get_db() as db:
         profile = PatientRepository.get_profile(db, patient_id)
         if not profile:
@@ -434,66 +532,136 @@ def display_patient_profile(patient_id):
 
         # Demographics
         st.subheader("📋 Demographics")
-        st.write(f"**Age:** {patient.age} years old")
-        st.write(f"**Gender:** {patient.gender.value.capitalize()}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Age", f"{patient.age} years")
+        col2.metric("Gender", patient.gender.value.capitalize())
+        col3.metric("Name", f"{patient.first_name} {patient.last_name}")
 
-        # Active Conditions
-        st.subheader("🩺 Conditions")
-        active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-        if active_conditions:
-            for condition in active_conditions:
-                severity_emoji = {
-                    "mild": "🟢",
-                    "moderate": "🟡",
-                    "severe": "🔴",
-                }.get(condition.severity, "⚪")
-                st.write(f"{severity_emoji} **{condition.display_name}**")
-                if condition.notes:
-                    st.caption(condition.notes)
-        else:
-            st.write("No active conditions")
+        # Two-column layout for conditions and medications
+        col_left, col_right = st.columns(2)
 
-        # Medications
-        st.subheader("💊 Medications")
-        active_meds = [m for m in profile.medications if m.status == "active"]
-        if active_meds:
-            for med in active_meds:
-                dosage = f" {med.dosage}" if med.dosage else ""
-                freq = f" ({med.frequency})" if med.frequency else ""
-                st.write(f"**{med.display_name}**{dosage}{freq}")
-                if med.reason:
-                    st.caption(f"For: {med.reason}")
-        else:
-            st.write("No active medications")
+        with col_left:
+            # Conditions
+            st.subheader("🩺 Conditions")
+            active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+            if active_conditions:
+                for condition in active_conditions:
+                    severity_emoji = {
+                        "mild": "🟢", "moderate": "🟡", "severe": "🔴",
+                    }.get(condition.severity, "⚪")
+                    st.write(f"{severity_emoji} **{condition.display_name}**")
+                    if condition.notes:
+                        st.caption(condition.notes)
+            else:
+                st.write("No active conditions")
 
-        # Allergies
-        st.subheader("⚠️ Allergies")
-        if profile.allergies:
-            for allergy in profile.allergies:
-                crit_emoji = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "⚪")
-                st.write(f"{crit_emoji} **{allergy.substance}**")
-                if allergy.reaction:
-                    st.caption(allergy.reaction)
+            # Allergies
+            st.subheader("⚠️ Allergies")
+            if profile.allergies:
+                for allergy in profile.allergies:
+                    crit_emoji = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "⚪")
+                    st.write(f"{crit_emoji} **{allergy.substance}**")
+                    if allergy.reaction:
+                        st.caption(allergy.reaction)
+            else:
+                st.write("No known allergies")
+
+        with col_right:
+            # Medications
+            st.subheader("💊 Medications")
+            active_meds = [m for m in profile.medications if m.status == "active"]
+            if active_meds:
+                for med in active_meds:
+                    dosage = f" {med.dosage}" if med.dosage else ""
+                    freq = f" ({med.frequency})" if med.frequency else ""
+                    st.write(f"**{med.display_name}**{dosage}{freq}")
+                    if med.reason:
+                        st.caption(f"For: {med.reason}")
+            else:
+                st.write("No active medications")
+
+            # Family History
+            st.subheader("👨‍👩‍👧 Family History")
+            if profile.family_history:
+                for fh in profile.family_history:
+                    onset = f" (age {fh.onset_age})" if fh.onset_age else ""
+                    st.write(f"**{fh.relation.replace('_', ' ').title()}**: {fh.condition_name}{onset}")
+                    if fh.notes:
+                        st.caption(fh.notes)
+            else:
+                st.write("No family history recorded")
+
+        # Vital Signs (full width)
+        st.subheader("❤️ Vital Signs")
+        if profile.vital_signs:
+            latest = profile.vital_signs[0] if profile.vital_signs else None
+            if latest:
+                vs_cols = st.columns(5)
+                if latest.systolic_bp and latest.diastolic_bp:
+                    vs_cols[0].metric("Blood Pressure", f"{latest.systolic_bp}/{latest.diastolic_bp}")
+                if latest.heart_rate:
+                    vs_cols[1].metric("Heart Rate", f"{latest.heart_rate} bpm")
+                if latest.temperature:
+                    vs_cols[2].metric("Temperature", f"{latest.temperature}°C")
+                if latest.oxygen_saturation:
+                    vs_cols[3].metric("SpO2", f"{latest.oxygen_saturation}%")
+                if latest.weight_kg:
+                    vs_cols[4].metric("Weight", f"{latest.weight_kg} kg")
+                if latest.recorded_at:
+                    st.caption(f"Recorded: {latest.recorded_at.strftime('%Y-%m-%d %H:%M')}")
         else:
-            st.write("No known allergies")
+            st.write("No vital signs recorded")
+
+        # Lab Results (full width)
+        st.subheader("🧪 Lab Results")
+        if profile.lab_results:
+            for lab in profile.lab_results[:10]:
+                interp_emoji = {
+                    "normal": "🟢", "abnormal": "🟡", "critical": "🔴",
+                }.get(lab.interpretation, "⚪")
+                value_str = f"{lab.value}"
+                if lab.unit:
+                    value_str += f" {lab.unit}"
+                ref_str = ""
+                if lab.reference_range_low is not None and lab.reference_range_high is not None:
+                    ref_str = f" (ref: {lab.reference_range_low}-{lab.reference_range_high})"
+                date_str = f" — {lab.result_date.strftime('%Y-%m-%d')}" if lab.result_date else ""
+                st.write(f"{interp_emoji} **{lab.test_name}**: {value_str}{ref_str}{date_str}")
+        else:
+            st.write("No lab results recorded")
+
+        # Social History (full width)
+        st.subheader("🏠 Social History")
+        if profile.social_history:
+            for sh in profile.social_history:
+                status_emoji = {
+                    "current": "🔵", "former": "🟡", "never": "🟢", "daily": "🔴",
+                }.get(sh.status, "⚪")
+                cat = sh.category.replace("_", " ").title()
+                st.write(f"{status_emoji} **{cat}**: {sh.status.capitalize()}")
+                if sh.description:
+                    st.caption(sh.description)
+        else:
+            st.write("No social history recorded")
 
 
 def display_member_management(patient_id):
-    """Display member management section for doctors."""
+    """Display access management section."""
     from uuid import UUID
 
     user_role = st.session_state.get("user_role", "patient")
+    can_manage = user_role in ("admin", "doctor", "caregiver")
 
-    with st.expander("👥 Manage Members", expanded=False):
+    with st.expander("👥 Manage Access", expanded=False):
         with get_db() as db:
             members = PatientMemberRepository.get_members_by_patient(db, UUID(patient_id))
 
             if not members:
-                st.info("No members assigned to this patient")
+                st.info("No users assigned to this patient")
             else:
-                st.caption("Current members:")
+                st.caption("Current access:")
                 for member in members:
-                    col_name, col_role, col_actions = st.columns([2, 1, 1])
+                    col_name, col_role, col_del = st.columns([3, 1, 1])
 
                     with col_name:
                         st.write(f"**{member.user.name}**")
@@ -501,83 +669,66 @@ def display_member_management(patient_id):
 
                     with col_role:
                         role_emoji = {
+                            "admin": "🔑",
                             "doctor": "👨‍⚕️",
                             "patient": "🧑",
                             "caregiver": "👥",
-                        }.get(member.role, "👤")
-                        st.write(f"{role_emoji} {member.role.capitalize()}")
+                        }.get(member.user.role, "👤")
+                        st.write(f"{role_emoji} {member.user.role.capitalize()}")
 
-                    with col_actions:
-                        if user_role == "doctor":
-                            # Change role dropdown
-                            member_key = f"role_{member.user_id}_{patient_id}"
-                            new_role = st.selectbox(
-                                "Role",
-                                options=["doctor", "patient", "caregiver"],
-                                index=["doctor", "patient", "caregiver"].index(member.role),
-                                key=member_key,
-                                label_visibility="collapsed",
-                            )
-                            if new_role != member.role:
-                                PatientMemberRepository.update_role(
-                                    db, member.user_id, UUID(patient_id), new_role
+                    with col_del:
+                        # Remove button (managers only, can't remove self)
+                        if can_manage and str(member.user_id) != st.session_state.user_id:
+                            if st.button(
+                                "✕",
+                                key=f"remove_{member.user_id}_{patient_id}",
+                                help=f"Remove {member.user.name}",
+                            ):
+                                PatientMemberRepository.remove_member(
+                                    db, member.user_id, UUID(patient_id)
                                 )
                                 db.commit()
+                                st.success(f"Removed {member.user.name}")
                                 st.rerun()
-
-                    # Remove button (only for doctors, can't remove self)
-                    if user_role == "doctor" and str(member.user_id) != st.session_state.user_id:
-                        if st.button(
-                            "Remove",
-                            key=f"remove_{member.user_id}_{patient_id}",
-                            type="secondary",
-                        ):
-                            PatientMemberRepository.remove_member(
-                                db, member.user_id, UUID(patient_id)
-                            )
-                            db.commit()
-                            st.success(f"Removed {member.user.name}")
-                            st.rerun()
 
                     st.markdown("---")
 
-            # Add member section (doctors only)
-            if user_role == "doctor":
-                st.subheader("Add Member")
-                # Get users not already members
+            # Add user section (admin, doctor, caregiver)
+            if can_manage:
+                st.subheader("Add User")
                 all_users = UserRepository.get_all(db)
                 member_user_ids = {str(m.user_id) for m in members}
-                available_users = [u for u in all_users if str(u.id) not in member_user_ids]
+                # Exclude admins (they see all automatically) and existing members
+                available_users = [
+                    u for u in all_users
+                    if str(u.id) not in member_user_ids and u.role != "admin"
+                ]
 
                 if available_users:
-                    user_options = {f"{u.name} (@{u.username})": str(u.id) for u in available_users}
+                    user_options = {
+                        f"{u.name} (@{u.username}) - {u.role}": str(u.id)
+                        for u in available_users
+                    }
                     selected_user = st.selectbox(
                         "Select User",
                         options=list(user_options.keys()),
                         key="add_member_user",
                     )
-                    selected_role = st.selectbox(
-                        "Role",
-                        options=["doctor", "patient", "caregiver"],
-                        index=2,  # Default to caregiver
-                        key="add_member_role",
-                    )
 
-                    if st.button("Add Member", type="primary", use_container_width=True):
+                    if st.button("Add User", type="primary", use_container_width=True):
                         from src.schemas import PatientMemberCreate
                         PatientMemberRepository.add_member(
                             db,
                             PatientMemberCreate(
                                 user_id=UUID(user_options[selected_user]),
                                 patient_id=UUID(patient_id),
-                                role=MemberRole(selected_role),
                             ),
                         )
                         db.commit()
                         st.success(f"Added {selected_user}")
                         st.rerun()
                 else:
-                    st.info("All users are already members")
+                    st.info("All eligible users are already assigned")
 
 
 def display_audit_log(patient_id):
@@ -799,6 +950,9 @@ def main():
     """Main application entry point."""
     logger.debug("Starting main application")
 
+    # Apply theme CSS
+    apply_theme()
+
     # Initialize authenticator
     authenticator = get_authenticator()
 
@@ -813,7 +967,7 @@ def main():
     # Check authentication status
     if st.session_state.get("authentication_status") is None:
         st.warning("Please enter your username and password")
-        st.info("**Demo Credentials:**\n- Username: `admin`, `doctor`, or `patient`\n- Password: `admin123`, `doctor123`, or `patient123`")
+        st.info("**Demo Credentials:**\n- `admin` / `admin123` (Admin)\n- `drsmith` / `doctor123` (Doctor)\n- `maria` / `patient123` (Patient)\n- `jamescaregiver` / `caregiver123` (Caregiver)")
         return
     elif st.session_state.get("authentication_status") is False:
         st.error("Username/password is incorrect")
@@ -823,12 +977,14 @@ def main():
     logger.info(f"User logged in: {st.session_state.get('username')}")
     init_session_state()
 
-    # Get user from database and store user_id
+    # Get user from database and store user_id and role
     db_user = get_user_from_db(st.session_state.get("username", ""))
     if db_user:
-        st.session_state.user_id = str(db_user.id)
+        st.session_state.user_id = db_user["id"]
+        st.session_state.user_role = db_user["role"]
     else:
         st.session_state.user_id = None
+        st.session_state.user_role = "patient"
 
     # Auto-index patients on startup if needed (only once per session)
     if "patients_indexed" not in st.session_state:
@@ -840,27 +996,25 @@ def main():
             st.error(f"Database connection error: {e}\n\nPlease ensure DATABASE_URL is configured in your Streamlit secrets.")
             return
 
-    # Sidebar
+    # Sidebar — compact context panel
     with st.sidebar:
-        # User info and logout at top
-        st.markdown(f"### Welcome, {st.session_state.get('name', 'User')}!")
+        from uuid import UUID
+
+        # Header: welcome + logout
+        st.markdown(f"### 🏥 {st.session_state.get('name', 'User')}")
+        st.caption(f"{st.session_state.user_role.capitalize()}")
         authenticator.logout("Logout", "sidebar")
         st.markdown("---")
 
-        st.title("🏥 Patient Digital Twin")
-        st.markdown("---")
-
-        # Patient Selection - filter by user's membership
-        st.subheader("Select Patient")
+        # Patient Selection
         with get_db() as db:
-            from uuid import UUID
-            if st.session_state.user_id:
-                # Show only patients the user is a member of
+            if st.session_state.user_role == "admin":
+                patients = PatientRepository.get_all(db)
+            elif st.session_state.user_id:
                 patients = PatientMemberRepository.get_patients_for_user(
                     db, UUID(st.session_state.user_id)
                 )
             else:
-                # Fallback to all patients if no database user
                 patients = PatientRepository.get_all(db)
             patient_options = {f"{p.first_name} {p.last_name}": str(p.id) for p in patients}
 
@@ -870,11 +1024,15 @@ def main():
             st.code("python -m src.database.seed")
             return
 
-        selected_name = st.selectbox(
-            "Patient",
-            options=list(patient_options.keys()),
-            key="patient_selector",
-        )
+        # Only show selector if multiple patients
+        if len(patient_options) > 1:
+            selected_name = st.selectbox(
+                "Patient",
+                options=list(patient_options.keys()),
+                key="patient_selector",
+            )
+        else:
+            selected_name = list(patient_options.keys())[0]
 
         if selected_name:
             new_patient_id = patient_options[selected_name]
@@ -884,205 +1042,164 @@ def main():
                 st.session_state.patient_name = selected_name
                 st.session_state.messages = []
                 st.session_state.current_session_id = None
-                # Update user role for the new patient
-                st.session_state.user_role = get_user_role_for_patient(
-                    st.session_state.user_id, new_patient_id
-                )
                 st.rerun()
 
-        # Set user role for current patient if not already set
-        if st.session_state.patient_id and st.session_state.user_id:
-            current_role = get_user_role_for_patient(
-                st.session_state.user_id, st.session_state.patient_id
+        # Agent Selection — only show if role has multiple agents
+        agent_options = AGENT_ACCESS.get(st.session_state.user_role, ["Medical Assistant"])
+        if st.session_state.agent_type not in agent_options:
+            st.session_state.agent_type = agent_options[0]
+
+        if len(agent_options) > 1:
+            selected_agent = st.radio(
+                "Agent",
+                options=agent_options,
+                index=agent_options.index(st.session_state.agent_type),
+                key="agent_selector",
+                horizontal=True,
+                help="**Medical Assistant**: Clinical questions, specialist consultations\n\n"
+                     "**Health Coach**: Health education, lifestyle tips",
             )
-            st.session_state.user_role = current_role
-            st.caption(f"Your role: **{current_role.capitalize()}**")
+            if selected_agent != st.session_state.agent_type:
+                logger.info(f"Agent changed: {selected_agent}")
+                st.session_state.agent_type = selected_agent
+                st.session_state.messages = []
+                st.session_state.current_session_id = None
+                st.rerun()
 
-        st.markdown("---")
-
-        # Agent Selection
-        st.subheader("Select Agent")
-        agent_options = ["Medical Assistant", "Health Coach"]
-        selected_agent = st.radio(
-            "Agent",
-            options=agent_options,
-            index=agent_options.index(st.session_state.agent_type),
-            key="agent_selector",
-            help="**Medical Assistant**: Clinical questions, add health info, consult specialists\n\n"
-                 "**Health Coach**: Health education, lifestyle tips, motivation",
-        )
-
-        if selected_agent != st.session_state.agent_type:
-            logger.info(f"Agent changed: {selected_agent}")
-            st.session_state.agent_type = selected_agent
-            st.session_state.messages = []
-            st.session_state.current_session_id = None
-            st.rerun()
-
-        # Agent personality badge
+        # Compact mode badge
         if st.session_state.agent_type == "Medical Assistant":
-            st.info("🩺 **Clinical Mode**\n\nAsk symptoms, add health info, consult specialists")
+            st.caption("🩺 Clinical Mode")
         else:
-            st.success("💪 **Coaching Mode**\n\nHealth education, lifestyle tips, motivation")
+            st.caption("💪 Coaching Mode")
 
         st.markdown("---")
 
-        # User Role Display (based on patient membership)
-        st.subheader("👤 Your Permissions")
-        user_role = st.session_state.user_role
-        if user_role == "doctor":
-            st.success("👨‍⚕️ **Doctor Access**\n\n✓ View records\n✓ Add records\n✓ Update records\n✓ Delete records\n✓ Manage members")
-        elif user_role == "patient":
-            st.info("🧑 **Patient Access**\n\n✓ View records\n✓ Add records\n✗ Update records\n✗ Delete records\n✗ Manage members")
-        else:  # caregiver
-            st.warning("👥 **Caregiver Access**\n\n✓ View records\n✗ Add records\n✗ Update records\n✗ Delete records\n✗ Manage members")
+        # Patient summary card
+        if st.session_state.patient_id:
+            display_patient_summary_card(st.session_state.patient_id)
+            st.markdown("---")
 
-        st.markdown("---")
-
-        # LLM Provider/Model Selection
-        st.subheader("🤖 LLM Settings")
-
-        provider_options = list(LLM_PROVIDER_MODELS.keys())
-        provider_labels = {"anthropic": "Anthropic (Claude)", "google": "Google (Gemini)", "openai": "OpenAI (GPT)"}
-
-        selected_provider = st.selectbox(
-            "Provider",
-            options=provider_options,
-            format_func=lambda x: provider_labels.get(x, x),
-            index=provider_options.index(st.session_state.llm_provider),
-            key="provider_selector",
-        )
-
-        if selected_provider != st.session_state.llm_provider:
-            logger.info(f"Provider changed: {selected_provider}")
-            st.session_state.llm_provider = selected_provider
-            # Reset to first model for new provider
-            st.session_state.llm_model = LLM_PROVIDER_MODELS[selected_provider][0][0]
-            st.rerun()
-
-        # Model selection based on provider
-        model_options = LLM_PROVIDER_MODELS[st.session_state.llm_provider]
-        model_ids = [m[0] for m in model_options]
-        model_labels = {m[0]: m[1] for m in model_options}
-
-        # Ensure current model is valid for selected provider
-        if st.session_state.llm_model not in model_ids:
-            st.session_state.llm_model = model_ids[0]
-
-        selected_model = st.selectbox(
-            "Model",
-            options=model_ids,
-            format_func=lambda x: model_labels.get(x, x),
-            index=model_ids.index(st.session_state.llm_model),
-            key="model_selector",
-        )
-
-        if selected_model != st.session_state.llm_model:
-            logger.info(f"Model changed: {selected_model}")
-            st.session_state.llm_model = selected_model
-            st.rerun()
-
-        # Show current selection
-        st.caption(f"Using: {model_labels.get(st.session_state.llm_model, st.session_state.llm_model)}")
-
-        st.markdown("---")
-
-        # Conversation history sidebar
+        # Conversations
         display_conversation_sidebar()
 
         st.markdown("---")
 
-        # Profile display
-        if st.session_state.patient_id:
-            display_patient_profile(st.session_state.patient_id)
-
-            st.markdown("---")
-
-            # Member management (shown to all, editable by doctors)
+        # Access Management — admin/doctor/caregiver only
+        if st.session_state.patient_id and st.session_state.user_role in ("admin", "doctor", "caregiver"):
             display_member_management(st.session_state.patient_id)
-
             st.markdown("---")
 
-            # Audit log
-            with st.expander("📜 Consultation Log"):
-                display_audit_log(st.session_state.patient_id)
+        # LLM Settings — collapsed expander
+        with st.expander("🤖 LLM Settings", expanded=False):
+            provider_options = list(LLM_PROVIDER_MODELS.keys())
+            provider_labels = {"anthropic": "Anthropic (Claude)", "google": "Google (Gemini)", "openai": "OpenAI (GPT)"}
 
-        st.markdown("---")
+            def on_provider_change():
+                new_provider = st.session_state.provider_selector
+                logger.info(f"Provider changed: {new_provider}")
+                st.session_state.llm_provider = new_provider
+                first_model = LLM_PROVIDER_MODELS[new_provider][0][0]
+                st.session_state.llm_model = first_model
+                st.session_state.model_selector = first_model
 
-        # Database tools
-        st.subheader("🗄️ Database")
-        if st.button("Open DBeaver", use_container_width=True, help="Open database in DBeaver"):
-            import subprocess
-            subprocess.Popen(["open", "-a", "DBeaver"])
-            st.toast("Opening DBeaver...", icon="🗄️")
+            st.selectbox(
+                "Provider",
+                options=provider_options,
+                format_func=lambda x: provider_labels.get(x, x),
+                index=provider_options.index(st.session_state.llm_provider),
+                key="provider_selector",
+                on_change=on_provider_change,
+            )
 
-    # Main content area
+            model_options = LLM_PROVIDER_MODELS[st.session_state.llm_provider]
+            model_ids = [m[0] for m in model_options]
+            model_labels = {m[0]: m[1] for m in model_options}
+
+            if st.session_state.llm_model not in model_ids:
+                st.session_state.llm_model = model_ids[0]
+
+            def on_model_change():
+                new_model = st.session_state.model_selector
+                logger.info(f"Model changed: {new_model}")
+                st.session_state.llm_model = new_model
+
+            st.selectbox(
+                "Model",
+                options=model_ids,
+                format_func=lambda x: model_labels.get(x, x),
+                index=model_ids.index(st.session_state.llm_model),
+                key="model_selector",
+                on_change=on_model_change,
+            )
+
+            st.caption(f"Using: {model_labels.get(st.session_state.llm_model, st.session_state.llm_model)}")
+
+    # ── Main content area ──
     if not st.session_state.patient_id:
-        st.info("👈 Please select a patient from the sidebar to begin.")
+        st.info("Please select a patient from the sidebar to begin.")
         return
 
-    # Title based on selected agent
+    # Title
     agent_emoji = "🩺" if st.session_state.agent_type == "Medical Assistant" else "💪"
-    st.title(f"{agent_emoji} Chat with {st.session_state.patient_name}'s {st.session_state.agent_type}")
+    st.title(f"{agent_emoji} {st.session_state.patient_name}'s {st.session_state.agent_type}")
 
-    # Health metrics dashboard
-    display_health_metrics(st.session_state.patient_id)
+    # Build tabs based on role
+    show_audit = st.session_state.user_role in ("admin", "doctor")
+    tab_labels = ["💬 Chat", "📋 Health Record", "📊 Visualizations"]
+    if show_audit:
+        tab_labels.append("📜 Audit Log")
 
-    st.markdown("---")
+    tabs = st.tabs(tab_labels)
 
-    # Create tabs for Chat and Visualizations
-    tab_chat, tab_viz = st.tabs(["💬 Chat", "📊 Visualizations"])
+    # ── Tab: Chat ──
+    with tabs[0]:
+        # Quick actions as compact chips
+        if not st.session_state.messages:
+            prompt_categories = get_suggested_prompts()
+            for category, prompts in prompt_categories.items():
+                st.caption(category)
+                chip_cols = st.columns(len(prompts))
+                for idx, prompt in enumerate(prompts):
+                    display_text = prompt if len(prompt) <= 45 else prompt[:42] + "..."
+                    with chip_cols[idx]:
+                        if st.button(display_text, key=f"chip_{category}_{idx}", use_container_width=True, help=prompt):
+                            logger.info(f"Quick action clicked: {prompt[:50]}")
+                            st.session_state.messages.append({"role": "user", "content": prompt})
+                            save_message_to_db("user", prompt)
+                            st.rerun()
 
-    with tab_viz:
-        st.subheader("Health Data Visualizations")
+    # ── Tab: Health Record ──
+    with tabs[1]:
+        display_health_record_tab(st.session_state.patient_id)
+
+    # ── Tab: Visualizations ──
+    with tabs[2]:
+        display_health_metrics(st.session_state.patient_id)
+        st.markdown("---")
         viz_col1, viz_col2 = st.columns(2)
         with viz_col1:
             display_severity_chart(st.session_state.patient_id)
         with viz_col2:
             display_consultation_history_chart(st.session_state.patient_id)
-
         display_medication_timeline(st.session_state.patient_id)
 
-    with tab_chat:
-        # Quick action prompts by category - send directly when clicked
-        st.caption("Quick actions (click to send):")
-        prompt_categories = get_suggested_prompts()
+    # ── Tab: Audit Log (admin/doctor only) ──
+    if show_audit:
+        with tabs[3]:
+            st.subheader("Specialist Consultation History")
+            display_audit_log(st.session_state.patient_id)
 
-        # Display categories in columns
-        cols = st.columns(len(prompt_categories))
-        for col_idx, (category, prompts) in enumerate(prompt_categories.items()):
-            with cols[col_idx]:
-                st.markdown(f"**{category}**")
-                for prompt_idx, prompt in enumerate(prompts):
-                    # Show truncated prompt as button text
-                    display_text = prompt if len(prompt) <= 50 else prompt[:47] + "..."
-                    if st.button(
-                        display_text,
-                        key=f"prompt_{col_idx}_{prompt_idx}",
-                        use_container_width=True,
-                        help=prompt,  # Full text on hover
-                    ):
-                        logger.info(f"Quick action clicked: {prompt[:50]}")
-                        st.session_state.messages.append({"role": "user", "content": prompt})
-                        save_message_to_db("user", prompt)
-                        st.rerun()
-
-        st.markdown("---")
-
-    # Display message history
+    # ── Chat messages and input (always visible below tabs) ──
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Check if we need to generate a response (last message is from user without response)
     needs_response = (
         st.session_state.messages
         and st.session_state.messages[-1]["role"] == "user"
     )
 
-    # Chat input
     if prompt := st.chat_input("How can I help you today?"):
-        # Regular chat input (no pending prompt)
         logger.info(f"User submitted chat message: length={len(prompt)}")
         st.session_state.messages.append({"role": "user", "content": prompt})
         save_message_to_db("user", prompt)
@@ -1095,14 +1212,11 @@ def main():
     else:
         user_prompt = None
 
-    # Get agent response if needed
     if needs_response and user_prompt:
         logger.debug(f"Generating response for patient={st.session_state.patient_id}, agent={st.session_state.agent_type}")
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    from uuid import UUID
-
                     patient_uuid = UUID(st.session_state.patient_id)
                     if st.session_state.agent_type == "Health Coach":
                         agent = HealthCoach(

@@ -26,7 +26,7 @@ class TestConsultPrimaryCareTool:
     """Tests for the consult_primary_care tool with translation."""
 
     @patch("src.agents.tools.consultation.translate_specialist_response")
-    @patch("src.agents.tools.consultation.get_primary_care_specialist")
+    @patch("src.agents.tools.consultation.get_specialist")
     @patch("src.agents.tools.consultation.AuditLogRepository")
     @patch("src.agents.tools.consultation.get_db")
     @patch("src.agents.tools.consultation.create_deidentified_context")
@@ -40,7 +40,7 @@ class TestConsultPrimaryCareTool:
     ):
         """Test that consult_primary_care calls translate_specialist_response."""
         from src.agents.tools.consultation import consult_primary_care
-        from src.agents.primary_care import SpecialistResponse, Recommendation
+        from src.agents.specialists.base import SpecialistResponse, Recommendation
 
         # Setup mocks
         mock_session = MagicMock()
@@ -87,7 +87,7 @@ class TestConsultPrimaryCareTool:
         assert result == "Patient-friendly translated response"
 
     @patch("src.agents.tools.consultation.translate_specialist_response")
-    @patch("src.agents.tools.consultation.get_primary_care_specialist")
+    @patch("src.agents.tools.consultation.get_specialist")
     @patch("src.agents.tools.consultation.AuditLogRepository")
     @patch("src.agents.tools.consultation.get_db")
     @patch("src.agents.tools.consultation.create_deidentified_context")
@@ -101,7 +101,7 @@ class TestConsultPrimaryCareTool:
     ):
         """Test that audit log captures the original clinical response, not translated."""
         from src.agents.tools.consultation import consult_primary_care
-        from src.agents.primary_care import SpecialistResponse, Recommendation
+        from src.agents.specialists.base import SpecialistResponse, Recommendation
 
         # Setup mocks
         mock_session = MagicMock()

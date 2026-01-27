@@ -7,7 +7,7 @@ that patients can understand (6th grade reading level).
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.agents.primary_care import SpecialistResponse
+from src.agents.specialists.base import SpecialistResponse
 from src.llm import get_chat_model
 from src.logging_config import get_logger
 

@@ -9,7 +9,7 @@ from typing import Optional
 
 from langchain_core.language_models import BaseChatModel
 
-from src.config import get_settings
+from src.config import SUPPORTED_MODELS, get_settings
 from src.logging_config import get_logger
 
 logger = get_logger("llm.factory")
@@ -53,6 +53,14 @@ def get_chat_model(
     max_tokens = max_tokens or settings.max_tokens
 
     logger.info(f"Creating LLM: provider={provider}, model={model}, max_tokens={max_tokens}")
+
+    # Validate model against supported high-reasoning models
+    if provider in SUPPORTED_MODELS and model not in SUPPORTED_MODELS[provider]:
+        supported = ", ".join(SUPPORTED_MODELS[provider])
+        logger.warning(
+            f"Model '{model}' is not in the supported high-reasoning models for "
+            f"'{provider}'. Supported: {supported}"
+        )
 
     if provider == "anthropic":
         if not settings.anthropic_api_key:

@@ -3,11 +3,21 @@ Pydantic schemas for User model validation and serialization.
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import re
+
+
+class UserRole(str, Enum):
+    """Roles for user access control."""
+
+    ADMIN = "admin"
+    DOCTOR = "doctor"
+    PATIENT = "patient"
+    CAREGIVER = "caregiver"
 
 
 class UserBase(BaseModel):
@@ -16,6 +26,7 @@ class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: str = Field(..., max_length=255)
     name: str = Field(..., min_length=1, max_length=100)
+    role: UserRole = UserRole.PATIENT
 
     @field_validator("email")
     @classmethod
@@ -56,6 +67,7 @@ class UserSchema(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    role: UserRole
     is_active: bool
     created_at: datetime
     updated_at: datetime

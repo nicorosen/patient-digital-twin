@@ -38,7 +38,6 @@ from src.schemas import (
     LabResultCreate,
     MedicationCreate,
     MedicationStatus,
-    MemberRole,
     PatientCreate,
     PatientMemberCreate,
     Severity,
@@ -46,6 +45,7 @@ from src.schemas import (
     SocialHistoryCreate,
     SocialHistoryStatus,
     UserCreate,
+    UserRole,
     VitalSignsCreate,
 )
 
@@ -655,7 +655,7 @@ def seed_sarah_chen(db) -> None:
 
 
 def seed_users(db) -> dict:
-    """Create demo users matching current authentication credentials.
+    """Create demo users with roles.
 
     Returns:
         dict: Mapping of username to user object
@@ -664,7 +664,7 @@ def seed_users(db) -> dict:
 
     users = {}
 
-    # Admin user (doctor role)
+    # Admin user
     admin = UserRepository.create(
         db,
         UserCreate(
@@ -672,36 +672,53 @@ def seed_users(db) -> dict:
             email="admin@example.com",
             password="admin123",
             name="Admin User",
+            role=UserRole.ADMIN,
         ),
     )
     users["admin"] = admin
-    print(f"  Created user: {admin.username} (ID: {admin.id})")
+    print(f"  Created user: {admin.username} (role: admin)")
 
     # Doctor user
     doctor = UserRepository.create(
         db,
         UserCreate(
-            username="doctor",
-            email="doctor@example.com",
+            username="drsmith",
+            email="drsmith@example.com",
             password="doctor123",
             name="Dr. Smith",
+            role=UserRole.DOCTOR,
         ),
     )
-    users["doctor"] = doctor
-    print(f"  Created user: {doctor.username} (ID: {doctor.id})")
+    users["drsmith"] = doctor
+    print(f"  Created user: {doctor.username} (role: doctor)")
 
-    # Patient user
-    patient_user = UserRepository.create(
+    # Patient user (Maria Garcia)
+    maria_user = UserRepository.create(
         db,
         UserCreate(
-            username="patient",
-            email="patient@example.com",
+            username="maria",
+            email="maria@example.com",
             password="patient123",
-            name="John Patient",
+            name="Maria Garcia",
+            role=UserRole.PATIENT,
         ),
     )
-    users["patient"] = patient_user
-    print(f"  Created user: {patient_user.username} (ID: {patient_user.id})")
+    users["maria"] = maria_user
+    print(f"  Created user: {maria_user.username} (role: patient)")
+
+    # Caregiver user (for James Thompson)
+    caregiver = UserRepository.create(
+        db,
+        UserCreate(
+            username="jamescaregiver",
+            email="jamescaregiver@example.com",
+            password="caregiver123",
+            name="James's Caregiver",
+            role=UserRole.CAREGIVER,
+        ),
+    )
+    users["jamescaregiver"] = caregiver
+    print(f"  Created user: {caregiver.username} (role: caregiver)")
 
     return users
 
@@ -709,44 +726,53 @@ def seed_users(db) -> dict:
 def seed_patient_memberships(db, users: dict, patients: list) -> None:
     """Create patient memberships linking users to patients.
 
+    Admin sees all patients automatically (no entries needed).
+
     Args:
         db: Database session
         users: Dict mapping username to User object
-        patients: List of Patient objects
+        patients: List of Patient objects (ordered: Garcia, Thompson, Chen)
     """
     print("\nCreating patient memberships...")
 
-    # Admin and doctor get access to all patients as doctor role
+    # Find patients by name
+    patient_by_name = {f"{p.first_name} {p.last_name}": p for p in patients}
+    maria = patient_by_name.get("Maria Garcia")
+    james = patient_by_name.get("James Thompson")
+    sarah = patient_by_name.get("Sarah Chen")
+
+    # Doctor assigned to all 3 patients
     for patient in patients:
         PatientMemberRepository.add_member(
             db,
             PatientMemberCreate(
-                user_id=users["admin"].id,
+                user_id=users["drsmith"].id,
                 patient_id=patient.id,
-                role=MemberRole.DOCTOR,
             ),
         )
-        PatientMemberRepository.add_member(
-            db,
-            PatientMemberCreate(
-                user_id=users["doctor"].id,
-                patient_id=patient.id,
-                role=MemberRole.DOCTOR,
-            ),
-        )
-        print(f"  Added admin and doctor to patient: {patient.full_name}")
+        print(f"  Added drsmith to patient: {patient.full_name}")
 
-    # Patient user gets access to first patient (Maria Garcia) as patient role
-    if patients:
+    # Maria (patient user) -> her own record
+    if maria:
         PatientMemberRepository.add_member(
             db,
             PatientMemberCreate(
-                user_id=users["patient"].id,
-                patient_id=patients[0].id,
-                role=MemberRole.PATIENT,
+                user_id=users["maria"].id,
+                patient_id=maria.id,
             ),
         )
-        print(f"  Added patient user to: {patients[0].full_name}")
+        print(f"  Added maria to patient: {maria.full_name}")
+
+    # Caregiver -> James Thompson
+    if james:
+        PatientMemberRepository.add_member(
+            db,
+            PatientMemberCreate(
+                user_id=users["jamescaregiver"].id,
+                patient_id=james.id,
+            ),
+        )
+        print(f"  Added jamescaregiver to patient: {james.full_name}")
 
 
 def seed_database() -> None:
@@ -812,7 +838,7 @@ def seed_database() -> None:
         # Print summary
         print(f"\nCreated {len(users)} users:")
         for username, user in users.items():
-            print(f"  - {user.name} ({username})")
+            print(f"  - {user.name} ({username}, role: {user.role})")
 
         print(f"\nCreated {len(patients)} patients:")
         for p in patients:
