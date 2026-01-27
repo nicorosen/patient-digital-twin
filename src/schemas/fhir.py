@@ -350,6 +350,7 @@ class PatientProfile(BaseSchema):
     lab_results: list = Field(default_factory=list)
     family_history: list = Field(default_factory=list)
     social_history: list = Field(default_factory=list)
+    procedures: list = Field(default_factory=list)
 
     @property
     def active_conditions(self) -> list[ConditionSchema]:

@@ -12,6 +12,7 @@ from src.models.clinical import Allergy, Condition, Medication
 from src.models.clinical_extended import (
     FamilyHistory,
     LabResult,
+    Procedure,
     SocialHistory,
     VitalSigns,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "LabResult",
     "FamilyHistory",
     "SocialHistory",
+    "Procedure",
     # Conversation
     "ConversationSession",
     "ConversationMessage",

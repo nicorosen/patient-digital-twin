@@ -8,7 +8,7 @@ These schemas follow FHIR-inspired conventions for:
 - SocialHistory: Lifestyle factors (smoking, alcohol, exercise)
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
@@ -382,6 +382,79 @@ class SocialHistoryUpdate(BaseSchema):
 
 class SocialHistorySchema(SocialHistoryBase, TimestampMixin):
     """Complete social history schema with ID and timestamps."""
+
+    id: UUID = Field(default_factory=uuid4)
+    patient_id: UUID
+
+
+# =============================================================================
+# PROCEDURE SCHEMAS
+# =============================================================================
+
+
+class ProcedureStatus(str, Enum):
+    """Status of a procedure."""
+
+    COMPLETED = "completed"
+    PLANNED = "planned"
+    IN_PROGRESS = "in-progress"
+
+
+class ProcedureBase(BaseSchema):
+    """Base procedure schema with common fields."""
+
+    display_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Name of the procedure",
+    )
+    code: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="CPT or SNOMED code",
+    )
+    status: ProcedureStatus = Field(
+        default=ProcedureStatus.COMPLETED,
+        description="Status: completed, planned, or in-progress",
+    )
+    performed_date: Optional[date] = Field(
+        None,
+        description="When the procedure was performed",
+    )
+    performer: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Who performed the procedure",
+    )
+    body_site: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Body site of the procedure",
+    )
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class ProcedureCreate(ProcedureBase):
+    """Schema for creating a procedure."""
+
+    patient_id: UUID
+
+
+class ProcedureUpdate(BaseSchema):
+    """Schema for updating a procedure (all fields optional)."""
+
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    code: Optional[str] = Field(None, max_length=50)
+    status: Optional[ProcedureStatus] = None
+    performed_date: Optional[date] = None
+    performer: Optional[str] = Field(None, max_length=255)
+    body_site: Optional[str] = Field(None, max_length=255)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+class ProcedureSchema(ProcedureBase, TimestampMixin):
+    """Complete procedure schema with ID and timestamps."""
 
     id: UUID = Field(default_factory=uuid4)
     patient_id: UUID

@@ -21,6 +21,7 @@ from src.database.repositories import (
     MedicationRepository,
     PatientMemberRepository,
     PatientRepository,
+    ProcedureRepository,
     SocialHistoryRepository,
     UserRepository,
     VitalSignsRepository,
@@ -40,6 +41,8 @@ from src.schemas import (
     MedicationStatus,
     PatientCreate,
     PatientMemberCreate,
+    ProcedureCreate,
+    ProcedureStatus,
     Severity,
     SocialHistoryCategory,
     SocialHistoryCreate,
@@ -250,6 +253,21 @@ def seed_maria_garcia(db) -> None:
         ),
     )
 
+    # Add procedures
+    ProcedureRepository.create(
+        db,
+        ProcedureCreate(
+            patient_id=patient_id,
+            display_name="Retinal Screening",
+            code="92250",
+            status=ProcedureStatus.COMPLETED,
+            performed_date=date(2025, 6, 15),
+            performer="Dr. Lee (Ophthalmology)",
+            body_site="Both eyes",
+            notes="Annual diabetic retinal screening. No retinopathy detected.",
+        ),
+    )
+
     print(f"  Created patient: {patient.full_name} (ID: {patient.id})")
 
 
@@ -455,6 +473,33 @@ def seed_james_thompson(db) -> None:
         ),
     )
 
+    # Add procedures
+    ProcedureRepository.create(
+        db,
+        ProcedureCreate(
+            patient_id=patient_id,
+            display_name="Coronary Angioplasty with Stent Placement",
+            code="92928",
+            status=ProcedureStatus.COMPLETED,
+            performed_date=date(2018, 11, 5),
+            performer="Dr. Patel (Interventional Cardiology)",
+            body_site="Left anterior descending artery",
+            notes="Drug-eluting stent placed. Successful revascularization.",
+        ),
+    )
+    ProcedureRepository.create(
+        db,
+        ProcedureCreate(
+            patient_id=patient_id,
+            display_name="Stress Echocardiogram",
+            code="93351",
+            status=ProcedureStatus.COMPLETED,
+            performed_date=date(2025, 8, 20),
+            performer="Dr. Patel (Cardiology)",
+            notes="Annual follow-up. Normal wall motion, EF 55%.",
+        ),
+    )
+
     print(f"  Created patient: {patient.full_name} (ID: {patient.id})")
 
 
@@ -648,6 +693,20 @@ def seed_sarah_chen(db) -> None:
             status=SocialHistoryStatus.CURRENT,
             description="High-stress job in tech industry",
             notes="Working on stress management techniques with therapist",
+        ),
+    )
+
+    # Add procedures
+    ProcedureRepository.create(
+        db,
+        ProcedureCreate(
+            patient_id=patient_id,
+            display_name="Pulmonary Function Test",
+            code="94010",
+            status=ProcedureStatus.COMPLETED,
+            performed_date=date(2025, 9, 10),
+            performer="Dr. Kim (Pulmonology)",
+            notes="Mild obstruction, reversible with bronchodilator. Consistent with asthma.",
         ),
     )
 
@@ -849,11 +908,12 @@ def seed_database() -> None:
             lab_results = len(p.lab_results)
             family_history = len(p.family_history)
             social_history = len(p.social_history)
+            procedures = len(p.procedures)
             members = len(p.members)
             print(
                 f"  - {p.full_name} ({p.age}y {p.gender}): "
                 f"{conditions} conditions, {medications} meds, {allergies} allergies, "
-                f"{vital_signs} vitals, {lab_results} labs, "
+                f"{vital_signs} vitals, {lab_results} labs, {procedures} procedures, "
                 f"{family_history} family hx, {social_history} social hx, "
                 f"{members} members"
             )

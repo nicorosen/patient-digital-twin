@@ -13,7 +13,7 @@ Unlike the Medical Assistant, the Health Coach:
 - Redirects clinical concerns to Medical Assistant
 """
 
-from typing import List, Optional
+from typing import Callable, List, Optional
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -150,8 +150,10 @@ class HealthCoach:
         Returns:
             List of LangChain messages.
         """
+        from datetime import date as _date
+        date_context = f"\n\nToday's date is {_date.today().strftime('%B %d, %Y')}.\n"
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=SYSTEM_PROMPT + date_context),
             SystemMessage(content=f"Current patient_id: {self.patient_id}"),
         ]
 
@@ -216,6 +218,7 @@ class HealthCoach:
         self,
         message: str,
         conversation_history: Optional[List[dict]] = None,
+        on_tool_start: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
         Process a chat message and return a response.
@@ -257,6 +260,9 @@ class HealthCoach:
             # Execute all tool calls
             tool_results = []
             for tool_call in response.tool_calls:
+                tool_name = tool_call.get("name", "")
+                if on_tool_start:
+                    on_tool_start(tool_name)
                 result = self._execute_tool_call(tool_call)
                 tool_results.append(
                     {
@@ -278,6 +284,8 @@ class HealthCoach:
                 )
 
             # Get next response
+            if on_tool_start:
+                on_tool_start("__thinking__")
             response = self.llm_with_tools.invoke(messages)
 
         if iteration >= max_iterations and response.tool_calls:

@@ -2,7 +2,7 @@
 Tools available to AI agents.
 
 Includes:
-- Patient data tools (get profile, add condition/medication/allergy)
+- Patient data tools (get profile, add condition/medication/allergy/procedure)
 - Consultation tools (consult specialist via MCP)
 - RAG search tools
 """
@@ -38,6 +38,7 @@ from src.agents.tools.patient_data import (
     get_lab_results,
     get_family_history,
     get_social_history,
+    get_procedures,
     search_patient_data,
     search_clinical_history,
     # Add tools
@@ -48,6 +49,7 @@ from src.agents.tools.patient_data import (
     add_lab_result,
     add_family_history,
     add_social_history,
+    add_procedure,
     # Update tools
     update_condition,
     update_medication,
@@ -56,6 +58,7 @@ from src.agents.tools.patient_data import (
     update_lab_result,
     update_family_history,
     update_social_history,
+    update_procedure,
     # Delete tools
     delete_condition,
     delete_medication,
@@ -64,6 +67,7 @@ from src.agents.tools.patient_data import (
     delete_lab_result,
     delete_family_history,
     delete_social_history,
+    delete_procedure,
 )
 
 # All tools available to the Medical Assistant
@@ -79,6 +83,7 @@ __all__ = [
     "get_lab_results",
     "get_family_history",
     "get_social_history",
+    "get_procedures",
     "search_patient_data",
     "search_clinical_history",
     # Patient data tools - add
@@ -89,6 +94,7 @@ __all__ = [
     "add_lab_result",
     "add_family_history",
     "add_social_history",
+    "add_procedure",
     # Patient data tools - update
     "update_condition",
     "update_medication",
@@ -97,6 +103,7 @@ __all__ = [
     "update_lab_result",
     "update_family_history",
     "update_social_history",
+    "update_procedure",
     # Patient data tools - delete
     "delete_condition",
     "delete_medication",
@@ -105,6 +112,7 @@ __all__ = [
     "delete_lab_result",
     "delete_family_history",
     "delete_social_history",
+    "delete_procedure",
     "PATIENT_DATA_TOOLS",
     # Consultation tools
     "consult_primary_care",

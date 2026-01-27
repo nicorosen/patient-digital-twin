@@ -9,7 +9,7 @@ The patient-facing agent that:
 """
 
 import json
-from typing import List, Optional
+from typing import Callable, List, Optional
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -92,7 +92,7 @@ medications, and allergies.
 
 1. **Answer Questions**: Use the search and profile tools to answer questions about their health.
 2. **Gather Information**: When a patient mentions new health information (conditions, medications,
-   allergies), extract the details and confirm with them before adding to their record.
+   allergies, procedures/treatments), extract the details and confirm with them before adding to their record.
 3. **Explain Clearly**: Always explain medical terms in plain language at a 6th grade reading level.
 4. **Consult Specialists**: When a patient has clinical questions about symptoms, medication
    interactions, or health concerns, you can consult specialists on their behalf.
@@ -259,8 +259,10 @@ based on the clinical question. Translate specialist responses to plain language
 the patient can understand.
 """
 
+        from datetime import date as _date
+        date_context = f"\n\nToday's date is {_date.today().strftime('%B %d, %Y')}.\n"
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT + "\n\n" + role_prompt),
+            SystemMessage(content=SYSTEM_PROMPT + date_context + "\n" + EXTRACTION_PROMPT + "\n\n" + role_prompt),
             SystemMessage(content=f"Current patient_id: {self.patient_id}"),
         ]
 
@@ -325,6 +327,7 @@ the patient can understand.
         self,
         message: str,
         conversation_history: Optional[List[dict]] = None,
+        on_tool_start: Optional[Callable[[str], None]] = None,
     ) -> str:
         """
         Process a chat message and return a response.
@@ -367,6 +370,9 @@ the patient can understand.
             # Execute all tool calls
             tool_results = []
             for tool_call in response.tool_calls:
+                tool_name = tool_call.get("name", "")
+                if on_tool_start:
+                    on_tool_start(tool_name)
                 result = self._execute_tool_call(tool_call)
                 tool_results.append(
                     {
@@ -392,6 +398,8 @@ the patient can understand.
                 f"{Colors.BRIGHT_BLUE}{Colors.BOLD}━━━ LLM INVOCATION (post-tool, iteration {iteration}) ━━━{Colors.RESET}\n"
                 f"{_format_messages_for_log(messages[-3:])}"
             )
+            if on_tool_start:
+                on_tool_start("__thinking__")
             response = self.llm_with_tools.invoke(messages)
             logger.debug(f"LLM response:\n{_format_response_for_log(response)}")
 

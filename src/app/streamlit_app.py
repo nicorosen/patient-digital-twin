@@ -43,6 +43,11 @@ from src.logging_config import get_logger, setup_logging
 setup_logging()
 logger = get_logger("app.streamlit")
 
+# Log LangSmith tracing status
+import os as _os
+if _os.environ.get("LANGCHAIN_TRACING_V2") == "true":
+    logger.info(f"LangSmith tracing enabled, project={_os.environ.get('LANGCHAIN_PROJECT', 'default')}")
+
 
 def get_authenticator():
     """Create and return the authenticator instance.
@@ -151,6 +156,11 @@ st.set_page_config(
 # --- Custom CSS enhancements (theme-agnostic, works with Streamlit's built-in light/dark) ---
 CUSTOM_CSS = """
 <style>
+/* Reduce top padding */
+.block-container {
+    padding-top: 1rem !important;
+}
+
 /* Chat messages */
 div[data-testid="stChatMessage"] {
     border-radius: 12px;
@@ -521,7 +531,7 @@ def display_patient_summary_card(patient_id):
 
 
 def display_health_record_tab(patient_id):
-    """Display full health record in main content area."""
+    """Display full health record with card-based layout."""
     with get_db() as db:
         profile = PatientRepository.get_profile(db, patient_id)
         if not profile:
@@ -530,119 +540,123 @@ def display_health_record_tab(patient_id):
 
         patient = profile.patient
 
-        # Demographics
-        st.subheader("📋 Demographics")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Age", f"{patient.age} years")
-        col2.metric("Gender", patient.gender.value.capitalize())
-        col3.metric("Name", f"{patient.first_name} {patient.last_name}")
+        # Demographics - inline compact
+        st.markdown(
+            f"**{patient.first_name} {patient.last_name}** · "
+            f"{patient.age}y · {patient.gender.value.capitalize()} · "
+            f"DOB {patient.date_of_birth}"
+        )
 
-        # Two-column layout for conditions and medications
-        col_left, col_right = st.columns(2)
+        # Row 1: Conditions | Medications | Allergies
+        c1, c2, c3 = st.columns(3)
 
-        with col_left:
-            # Conditions
-            st.subheader("🩺 Conditions")
-            active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-            if active_conditions:
-                for condition in active_conditions:
-                    severity_emoji = {
-                        "mild": "🟢", "moderate": "🟡", "severe": "🔴",
-                    }.get(condition.severity, "⚪")
-                    st.write(f"{severity_emoji} **{condition.display_name}**")
-                    if condition.notes:
-                        st.caption(condition.notes)
-            else:
-                st.write("No active conditions")
+        with c1:
+            with st.container(border=True):
+                st.markdown("**Conditions**")
+                active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+                if active_conditions:
+                    for condition in active_conditions:
+                        sev = {"mild": "🟢", "moderate": "🟡", "severe": "🔴"}.get(condition.severity, "")
+                        st.markdown(f"{sev} {condition.display_name}", help=condition.notes or "")
+                else:
+                    st.caption("None recorded")
 
-            # Allergies
-            st.subheader("⚠️ Allergies")
-            if profile.allergies:
-                for allergy in profile.allergies:
-                    crit_emoji = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "⚪")
-                    st.write(f"{crit_emoji} **{allergy.substance}**")
-                    if allergy.reaction:
-                        st.caption(allergy.reaction)
-            else:
-                st.write("No known allergies")
+        with c2:
+            with st.container(border=True):
+                st.markdown("**Medications**")
+                active_meds = [m for m in profile.medications if m.status == "active"]
+                if active_meds:
+                    for med in active_meds:
+                        dosage = f" {med.dosage}" if med.dosage else ""
+                        freq = f" · {med.frequency}" if med.frequency else ""
+                        st.markdown(f"{med.display_name}{dosage}{freq}", help=med.reason or "")
+                else:
+                    st.caption("None recorded")
 
-        with col_right:
-            # Medications
-            st.subheader("💊 Medications")
-            active_meds = [m for m in profile.medications if m.status == "active"]
-            if active_meds:
-                for med in active_meds:
-                    dosage = f" {med.dosage}" if med.dosage else ""
-                    freq = f" ({med.frequency})" if med.frequency else ""
-                    st.write(f"**{med.display_name}**{dosage}{freq}")
-                    if med.reason:
-                        st.caption(f"For: {med.reason}")
-            else:
-                st.write("No active medications")
+        with c3:
+            with st.container(border=True):
+                st.markdown("**Allergies**")
+                if profile.allergies:
+                    for allergy in profile.allergies:
+                        crit = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "")
+                        st.markdown(f"{crit} {allergy.substance}", help=allergy.reaction or "")
+                else:
+                    st.caption("No known allergies")
 
-            # Family History
-            st.subheader("👨‍👩‍👧 Family History")
-            if profile.family_history:
-                for fh in profile.family_history:
-                    onset = f" (age {fh.onset_age})" if fh.onset_age else ""
-                    st.write(f"**{fh.relation.replace('_', ' ').title()}**: {fh.condition_name}{onset}")
-                    if fh.notes:
-                        st.caption(fh.notes)
-            else:
-                st.write("No family history recorded")
+        # Row 2: Procedures | Vital Signs | Lab Results
+        c4, c5, c6 = st.columns(3)
 
-        # Vital Signs (full width)
-        st.subheader("❤️ Vital Signs")
-        if profile.vital_signs:
-            latest = profile.vital_signs[0] if profile.vital_signs else None
-            if latest:
-                vs_cols = st.columns(5)
-                if latest.systolic_bp and latest.diastolic_bp:
-                    vs_cols[0].metric("Blood Pressure", f"{latest.systolic_bp}/{latest.diastolic_bp}")
-                if latest.heart_rate:
-                    vs_cols[1].metric("Heart Rate", f"{latest.heart_rate} bpm")
-                if latest.temperature:
-                    vs_cols[2].metric("Temperature", f"{latest.temperature}°C")
-                if latest.oxygen_saturation:
-                    vs_cols[3].metric("SpO2", f"{latest.oxygen_saturation}%")
-                if latest.weight_kg:
-                    vs_cols[4].metric("Weight", f"{latest.weight_kg} kg")
-                if latest.recorded_at:
-                    st.caption(f"Recorded: {latest.recorded_at.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            st.write("No vital signs recorded")
+        with c4:
+            with st.container(border=True):
+                st.markdown("**Procedures**")
+                if profile.procedures:
+                    for proc in profile.procedures:
+                        status_icon = {"completed": "✓", "planned": "◯", "in-progress": "⟳"}.get(proc.status, "")
+                        date_str = f" · {proc.performed_date}" if proc.performed_date else ""
+                        st.markdown(f"{status_icon} {proc.display_name}{date_str}", help=proc.notes or "")
+                else:
+                    st.caption("None recorded")
 
-        # Lab Results (full width)
-        st.subheader("🧪 Lab Results")
-        if profile.lab_results:
-            for lab in profile.lab_results[:10]:
-                interp_emoji = {
-                    "normal": "🟢", "abnormal": "🟡", "critical": "🔴",
-                }.get(lab.interpretation, "⚪")
-                value_str = f"{lab.value}"
-                if lab.unit:
-                    value_str += f" {lab.unit}"
-                ref_str = ""
-                if lab.reference_range_low is not None and lab.reference_range_high is not None:
-                    ref_str = f" (ref: {lab.reference_range_low}-{lab.reference_range_high})"
-                date_str = f" — {lab.result_date.strftime('%Y-%m-%d')}" if lab.result_date else ""
-                st.write(f"{interp_emoji} **{lab.test_name}**: {value_str}{ref_str}{date_str}")
-        else:
-            st.write("No lab results recorded")
+        with c5:
+            with st.container(border=True):
+                st.markdown("**Vital Signs**")
+                if profile.vital_signs:
+                    latest = sorted(profile.vital_signs, key=lambda v: v.recorded_at, reverse=True)[0]
+                    items = []
+                    if latest.systolic_bp and latest.diastolic_bp:
+                        items.append(f"BP {latest.systolic_bp}/{latest.diastolic_bp}")
+                    if latest.heart_rate:
+                        items.append(f"HR {latest.heart_rate}")
+                    if latest.temperature:
+                        items.append(f"Temp {latest.temperature}°C")
+                    if latest.oxygen_saturation:
+                        items.append(f"SpO2 {latest.oxygen_saturation}%")
+                    if latest.weight_kg:
+                        items.append(f"Wt {latest.weight_kg}kg")
+                    for item in items:
+                        st.markdown(item)
+                    st.caption(latest.recorded_at.strftime('%Y-%m-%d'))
+                else:
+                    st.caption("None recorded")
 
-        # Social History (full width)
-        st.subheader("🏠 Social History")
-        if profile.social_history:
-            for sh in profile.social_history:
-                status_emoji = {
-                    "current": "🔵", "former": "🟡", "never": "🟢", "daily": "🔴",
-                }.get(sh.status, "⚪")
-                cat = sh.category.replace("_", " ").title()
-                st.write(f"{status_emoji} **{cat}**: {sh.status.capitalize()}")
-                if sh.description:
-                    st.caption(sh.description)
-        else:
-            st.write("No social history recorded")
+        with c6:
+            with st.container(border=True):
+                st.markdown("**Lab Results**")
+                if profile.lab_results:
+                    for lab in profile.lab_results[:5]:
+                        interp = {"normal": "🟢", "abnormal": "🟡", "critical": "🔴"}.get(lab.interpretation, "")
+                        val = f"{lab.value}"
+                        if lab.unit:
+                            val += f" {lab.unit}"
+                        st.markdown(f"{interp} {lab.test_name}: {val}")
+                else:
+                    st.caption("None recorded")
+
+        # Row 3: Family History | Social History
+        c7, c8 = st.columns(2)
+
+        with c7:
+            with st.container(border=True):
+                st.markdown("**Family History**")
+                if profile.family_history:
+                    for fh in profile.family_history:
+                        onset = f" (age {fh.onset_age})" if fh.onset_age else ""
+                        rel = fh.relation.replace("_", " ").title()
+                        st.markdown(f"{rel}: {fh.condition_name}{onset}", help=fh.notes or "")
+                else:
+                    st.caption("None recorded")
+
+        with c8:
+            with st.container(border=True):
+                st.markdown("**Social History**")
+                if profile.social_history:
+                    for sh in profile.social_history:
+                        status_icon = {"current": "🔵", "former": "🟡", "never": "🟢", "daily": "🔴"}.get(sh.status, "⚪")
+                        cat = sh.category.replace("_", " ").title()
+                        desc = f": {sh.description}" if sh.description else ""
+                        st.markdown(f"{status_icon} {cat} · {sh.status}{desc}")
+                else:
+                    st.caption("None recorded")
 
 
 def display_member_management(patient_id):
@@ -1139,9 +1153,9 @@ def main():
         st.info("Please select a patient from the sidebar to begin.")
         return
 
-    # Title
+    # Title (compact)
     agent_emoji = "🩺" if st.session_state.agent_type == "Medical Assistant" else "💪"
-    st.title(f"{agent_emoji} {st.session_state.patient_name}'s {st.session_state.agent_type}")
+    st.markdown(f"### {agent_emoji} {st.session_state.patient_name}'s {st.session_state.agent_type}")
 
     # Build tabs based on role
     show_audit = st.session_state.user_role in ("admin", "doctor")
@@ -1214,35 +1228,77 @@ def main():
 
     if needs_response and user_prompt:
         logger.debug(f"Generating response for patient={st.session_state.patient_id}, agent={st.session_state.agent_type}")
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    patient_uuid = UUID(st.session_state.patient_id)
-                    if st.session_state.agent_type == "Health Coach":
-                        agent = HealthCoach(
-                            patient_uuid,
-                            provider=st.session_state.llm_provider,
-                            model=st.session_state.llm_model,
-                        )
-                    else:
-                        agent = MedicalAssistant(
-                            patient_uuid,
-                            user_role=st.session_state.user_role,
-                            provider=st.session_state.llm_provider,
-                            model=st.session_state.llm_model,
-                        )
 
-                    response = agent.chat(user_prompt, st.session_state.messages[:-1])
-                    st.markdown(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                    save_message_to_db("assistant", response)
-                    logger.info(f"Agent response generated: agent={st.session_state.agent_type}, length={len(response)}")
-                except Exception as e:
-                    logger.error(f"Error generating response: {e}", exc_info=True)
-                    error_msg = f"Sorry, I encountered an error: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                    save_message_to_db("assistant", error_msg)
+        # Friendly display names for tools
+        _TOOL_DISPLAY_NAMES = {
+            "consult_primary_care": "Primary Care",
+            "consult_cardiology": "Cardiology",
+            "consult_endocrinology": "Endocrinology",
+            "consult_pulmonology": "Pulmonology",
+            "consult_neurology": "Neurology",
+            "consult_gastroenterology": "Gastroenterology",
+            "consult_oncology": "Oncology",
+            "consult_psychiatry": "Psychiatry",
+            "consult_orthopedics": "Orthopedics",
+            "consult_nephrology": "Nephrology",
+            "consult_dermatology": "Dermatology",
+            "consult_medical_board": "Medical Board",
+            "search_medical_web": "Searching the web",
+        }
+
+        with st.chat_message("assistant"):
+            status_placeholder = st.status("Processing your question...", expanded=False)
+            tool_counter = {"n": 0}
+
+            def _on_tool_start(tool_name: str) -> None:
+                if tool_name == "__thinking__":
+                    status_placeholder.update(label="Reviewing specialist responses...")
+                    return
+                tool_counter["n"] += 1
+                display = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name.replace("_", " ").title())
+                if tool_name.startswith("consult_"):
+                    label = f"Consulting {display}..."
+                elif tool_name == "search_medical_web":
+                    label = f"{display}..."
+                else:
+                    label = f"Looking up {display}..."
+                status_placeholder.update(label=label)
+
+            try:
+                patient_uuid = UUID(st.session_state.patient_id)
+                if st.session_state.agent_type == "Health Coach":
+                    agent = HealthCoach(
+                        patient_uuid,
+                        provider=st.session_state.llm_provider,
+                        model=st.session_state.llm_model,
+                    )
+                else:
+                    agent = MedicalAssistant(
+                        patient_uuid,
+                        user_role=st.session_state.user_role,
+                        provider=st.session_state.llm_provider,
+                        model=st.session_state.llm_model,
+                    )
+
+                response = agent.chat(
+                    user_prompt,
+                    st.session_state.messages[:-1],
+                    on_tool_start=_on_tool_start,
+                )
+                status_placeholder.update(label="Done", state="complete")
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                save_message_to_db("assistant", response)
+                logger.info(f"Agent response generated: agent={st.session_state.agent_type}, length={len(response)}")
+                # Rerun so Health Record tab refreshes with any new data
+                st.rerun()
+            except Exception as e:
+                logger.error(f"Error generating response: {e}", exc_info=True)
+                status_placeholder.update(label="Error", state="error")
+                error_msg = f"Sorry, I encountered an error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                save_message_to_db("assistant", error_msg)
 
 
 if __name__ == "__main__":

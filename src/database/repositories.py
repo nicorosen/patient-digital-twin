@@ -21,6 +21,7 @@ from src.models import (
     Medication,
     Patient,
     PatientMember,
+    Procedure,
     SocialHistory,
     User,
     VitalSigns,
@@ -44,6 +45,8 @@ from src.schemas import (
     PatientProfile,
     PatientSchema,
     PatientUpdate,
+    ProcedureCreate,
+    ProcedureUpdate,
     SocialHistoryCreate,
     SocialHistoryUpdate,
     UserCreate,
@@ -125,6 +128,7 @@ class PatientRepository:
             lab_results=[l for l in patient.lab_results],
             family_history=[f for f in patient.family_history],
             social_history=[s for s in patient.social_history],
+            procedures=[p for p in patient.procedures],
         )
 
 
@@ -896,6 +900,72 @@ class SocialHistoryRepository:
             return False
 
         db.delete(social_history)
+        db.flush()
+        return True
+
+
+class ProcedureRepository:
+    """Repository for Procedure CRUD operations."""
+
+    @staticmethod
+    def get_by_patient(
+        db: Session, patient_id: UUID, status: Optional[str] = None
+    ) -> List[Procedure]:
+        """Get all procedures for a patient, optionally filtered by status."""
+        query = db.query(Procedure).filter(Procedure.patient_id == patient_id)
+        if status:
+            query = query.filter(Procedure.status == status)
+        return query.order_by(Procedure.performed_date.desc().nullslast()).all()
+
+    @staticmethod
+    def get_by_id(db: Session, procedure_id: UUID) -> Optional[Procedure]:
+        """Get a procedure by ID."""
+        return db.query(Procedure).filter(Procedure.id == procedure_id).first()
+
+    @staticmethod
+    def create(db: Session, procedure_data: ProcedureCreate) -> Procedure:
+        """Create a new procedure."""
+        procedure = Procedure(
+            patient_id=procedure_data.patient_id,
+            display_name=procedure_data.display_name,
+            code=procedure_data.code,
+            status=procedure_data.status.value if hasattr(procedure_data.status, 'value') else procedure_data.status,
+            performed_date=procedure_data.performed_date,
+            performer=procedure_data.performer,
+            body_site=procedure_data.body_site,
+            notes=procedure_data.notes,
+        )
+        db.add(procedure)
+        db.flush()
+        return procedure
+
+    @staticmethod
+    def update(
+        db: Session, procedure_id: UUID, procedure_data: ProcedureUpdate
+    ) -> Optional[Procedure]:
+        """Update a procedure."""
+        procedure = ProcedureRepository.get_by_id(db, procedure_id)
+        if not procedure:
+            return None
+
+        update_data = procedure_data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            if value is not None:
+                if field == "status":
+                    value = value.value if hasattr(value, 'value') else value
+                setattr(procedure, field, value)
+
+        db.flush()
+        return procedure
+
+    @staticmethod
+    def delete(db: Session, procedure_id: UUID) -> bool:
+        """Delete a procedure."""
+        procedure = ProcedureRepository.get_by_id(db, procedure_id)
+        if not procedure:
+            return False
+
+        db.delete(procedure)
         db.flush()
         return True
 

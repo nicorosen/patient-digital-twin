@@ -67,6 +67,12 @@ from src.schemas.clinical_extended import (
     SocialHistoryCreate,
     SocialHistorySchema,
     SocialHistoryUpdate,
+    # Procedure schemas
+    ProcedureBase,
+    ProcedureCreate,
+    ProcedureSchema,
+    ProcedureStatus,
+    ProcedureUpdate,
 )
 
 from src.schemas.conversation import (
@@ -110,6 +116,7 @@ __all__ = [
     "FamilyRelationship",
     "SocialHistoryCategory",
     "SocialHistoryStatus",
+    "ProcedureStatus",
     # Patient
     "PatientBase",
     "PatientCreate",
@@ -150,6 +157,11 @@ __all__ = [
     "SocialHistoryCreate",
     "SocialHistoryUpdate",
     "SocialHistorySchema",
+    # Procedure
+    "ProcedureBase",
+    "ProcedureCreate",
+    "ProcedureUpdate",
+    "ProcedureSchema",
     # Composite
     "PatientProfile",
     "DeidentifiedContext",

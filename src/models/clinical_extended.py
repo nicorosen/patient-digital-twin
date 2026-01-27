@@ -2,6 +2,7 @@
 Extended clinical data models for comprehensive EHR.
 
 These models extend the core clinical data with:
+- Procedure: Medical procedures and treatments
 - VitalSigns: Blood pressure, heart rate, temperature, etc.
 - LabResult: Laboratory test results with reference ranges
 - FamilyHistory: Family medical history for risk assessment
@@ -266,4 +267,58 @@ class SocialHistory(Base, UUIDMixin, TimestampMixin):
         if self.notes:
             parts.append(f"Notes: {self.notes}")
 
+        return ". ".join(parts) + "."
+
+
+class Procedure(Base, UUIDMixin, TimestampMixin):
+    """
+    Procedure model representing medical procedures and treatments.
+
+    Attributes:
+        id: Unique identifier (UUID)
+        patient_id: Reference to the patient
+        display_name: Name of the procedure
+        code: CPT or SNOMED code (optional)
+        status: completed, planned, in-progress
+        performed_date: When the procedure was performed
+        performer: Who performed the procedure
+        body_site: Where on the body
+        notes: Additional notes
+    """
+
+    __tablename__ = "procedures"
+
+    patient_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="completed")
+    performed_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    performer: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    body_site: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    patient: Mapped["Patient"] = relationship("Patient", back_populates="procedures")
+
+    def __repr__(self) -> str:
+        return f"<Procedure(id={self.id}, name='{self.display_name}', status='{self.status}')>"
+
+    def to_document(self) -> str:
+        """Convert procedure to a document string for RAG indexing."""
+        parts = [f"Procedure: {self.display_name}"]
+        if self.status:
+            parts.append(f"Status: {self.status}")
+        if self.performed_date:
+            parts.append(f"Date: {self.performed_date.strftime('%B %d, %Y')}")
+        if self.performer:
+            parts.append(f"Performed by: {self.performer}")
+        if self.body_site:
+            parts.append(f"Body site: {self.body_site}")
+        if self.notes:
+            parts.append(f"Notes: {self.notes}")
         return ". ".join(parts) + "."

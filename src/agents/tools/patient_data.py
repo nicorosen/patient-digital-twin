@@ -21,6 +21,7 @@ from src.database.repositories import (
     LabResultRepository,
     MedicationRepository,
     PatientRepository,
+    ProcedureRepository,
     SocialHistoryRepository,
     VitalSignsRepository,
 )
@@ -43,6 +44,9 @@ from src.schemas import (
     MedicationCreate,
     MedicationStatus,
     MedicationUpdate,
+    ProcedureCreate,
+    ProcedureStatus,
+    ProcedureUpdate,
     Severity,
     SocialHistoryCategory,
     SocialHistoryCreate,
@@ -180,6 +184,17 @@ def get_patient_profile(patient_id: str) -> str:
                 lines.append(f"- {sh.category.capitalize()}: {sh.status}{desc}")
         else:
             lines.append("- No social history recorded")
+        lines.append("")
+
+        # Procedures
+        lines.append("## Procedures")
+        if profile.procedures:
+            for proc in profile.procedures:
+                date_str = f" ({proc.performed_date})" if proc.performed_date else ""
+                status_str = f" [{proc.status}]" if proc.status else ""
+                lines.append(f"- {proc.display_name}{status_str}{date_str}")
+        else:
+            lines.append("- No procedures recorded")
 
         logger.debug(f"Retrieved profile: conditions={len(profile.conditions)}, "
                      f"medications={len(profile.medications)}, allergies={len(profile.allergies)}")
@@ -969,6 +984,292 @@ def add_social_history(
             f"- Description: {description or 'Not specified'}\n"
             f"- Notes: {notes or 'None'}"
         )
+
+
+@tool
+def add_procedure(
+    patient_id: str,
+    display_name: str,
+    status: str = "completed",
+    performed_date: Optional[str] = None,
+    code: Optional[str] = None,
+    performer: Optional[str] = None,
+    body_site: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> str:
+    """
+    Add a medical procedure or treatment to the patient's record.
+
+    Use this when the patient mentions a procedure, surgery, or treatment they've had
+    or that is planned. Examples: appendectomy, colonoscopy, corneal cross-linking (CXL),
+    knee replacement, cardiac catheterization.
+
+    Args:
+        patient_id: The UUID of the patient.
+        display_name: Name of the procedure (e.g., "Corneal Cross-Linking (CXL)").
+        status: Status of the procedure. Options: completed, planned, in-progress.
+            Default is "completed".
+        performed_date: When the procedure was performed (YYYY-MM-DD or natural language).
+        code: Optional CPT or SNOMED code.
+        performer: Who performed the procedure (e.g., "Dr. Smith").
+        body_site: Body site of the procedure (e.g., "left eye", "right knee").
+        notes: Additional notes about the procedure.
+
+    Returns:
+        Confirmation message with the procedure details.
+    """
+    logger.info(f"add_procedure called: patient_id={patient_id}, name={display_name}")
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
+        return f"Error: Invalid patient ID format: {patient_id}"
+
+    # Parse status
+    try:
+        proc_status = ProcedureStatus(status.lower().replace(" ", "-"))
+    except ValueError:
+        logger.warning(f"Invalid procedure status: {status}")
+        valid = ", ".join([s.value for s in ProcedureStatus])
+        return f"Error: Invalid status '{status}'. Use: {valid}"
+
+    # Parse date
+    parsed_date = _parse_date(performed_date)
+
+    with get_db() as db:
+        patient = PatientRepository.get_by_id(db, patient_uuid)
+        if not patient:
+            logger.warning(f"Patient not found: {patient_id}")
+            return f"Error: Patient not found with ID: {patient_id}"
+
+        procedure_data = ProcedureCreate(
+            patient_id=patient_uuid,
+            display_name=display_name,
+            code=code,
+            status=proc_status,
+            performed_date=parsed_date,
+            performer=performer,
+            body_site=body_site,
+            notes=notes,
+        )
+        procedure = ProcedureRepository.create(db, procedure_data)
+        logger.debug(f"Created procedure in database: id={procedure.id}")
+
+        # Index in vector store
+        retriever = get_retriever()
+        retriever.add_document(
+            patient_id=patient_uuid,
+            doc_id=procedure.id,
+            content=procedure.to_document(),
+            doc_type="procedure",
+        )
+        logger.debug("Indexed procedure in vector store")
+
+        date_str = parsed_date.strftime('%Y-%m-%d') if parsed_date else "Not specified"
+        logger.info(f"Successfully added procedure for patient {patient_id}")
+        return (
+            f"Successfully added procedure:\n"
+            f"- Name: {display_name}\n"
+            f"- Status: {status}\n"
+            f"- Date: {date_str}\n"
+            f"- Performer: {performer or 'Not specified'}\n"
+            f"- Body Site: {body_site or 'Not specified'}\n"
+            f"- Notes: {notes or 'None'}"
+        )
+
+
+@tool
+def get_procedures(patient_id: str, status: Optional[str] = None) -> str:
+    """
+    Get all procedures/treatments for the patient.
+
+    Use this when the patient asks about their procedures, surgeries,
+    or treatments. Returns all procedures from the record.
+
+    Args:
+        patient_id: The UUID of the patient.
+        status: Optional filter by status (completed, planned, in-progress).
+            If not specified, returns all procedures.
+
+    Returns:
+        List of all procedures for the patient.
+    """
+    logger.info(f"get_procedures called: patient_id={patient_id}, status={status}")
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        logger.warning(f"Invalid patient ID format: {patient_id}")
+        return f"Error: Invalid patient ID format: {patient_id}"
+
+    with get_db() as db:
+        procedures = ProcedureRepository.get_by_patient(db, patient_uuid)
+        if not procedures:
+            return "No procedures recorded for this patient."
+
+        if status:
+            try:
+                filter_status = ProcedureStatus(status.lower().replace(" ", "-"))
+                procedures = [p for p in procedures if p.status == filter_status.value]
+            except ValueError:
+                logger.warning(f"Invalid status filter: {status}")
+                return f"Error: Invalid status '{status}'. Use: completed, planned, in-progress"
+
+        if not procedures:
+            return f"No {status} procedures found for this patient."
+
+        lines = [f"## Patient Procedures ({len(procedures)} total)"]
+        for proc in procedures:
+            status_str = f"[{proc.status}]" if proc.status else ""
+            date_str = f" on {proc.performed_date}" if proc.performed_date else ""
+            performer_str = f" by {proc.performer}" if proc.performer else ""
+            body_str = f" ({proc.body_site})" if proc.body_site else ""
+            lines.append(f"\n- **{proc.display_name}** {status_str}{date_str}{performer_str}{body_str}")
+            lines.append(f"  ID: {proc.id}")
+            if proc.notes:
+                lines.append(f"  Notes: {proc.notes}")
+
+        return "\n".join(lines)
+
+
+@tool
+def update_procedure(
+    patient_id: str,
+    procedure_id: str,
+    display_name: Optional[str] = None,
+    status: Optional[str] = None,
+    performed_date: Optional[str] = None,
+    performer: Optional[str] = None,
+    body_site: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> str:
+    """
+    Update an existing procedure in the patient's record.
+
+    IMPORTANT: Before calling this tool, you MUST first call get_procedures() to retrieve
+    the actual procedure IDs from the database. Never guess or fabricate UUIDs.
+
+    Args:
+        patient_id: The UUID of the patient.
+        procedure_id: The UUID of the procedure to update (obtained from get_procedures).
+        display_name: Updated procedure name.
+        status: New status. Options: completed, planned, in-progress.
+        performed_date: Updated date (YYYY-MM-DD or natural language).
+        performer: Updated performer.
+        body_site: Updated body site.
+        notes: Updated notes.
+
+    Returns:
+        Confirmation message with the updated procedure details.
+    """
+    logger.info(f"update_procedure called: patient_id={patient_id}, procedure_id={procedure_id}")
+    try:
+        patient_uuid = UUID(patient_id)
+        procedure_uuid = UUID(procedure_id)
+    except ValueError as e:
+        logger.warning(f"Invalid UUID format: {e}")
+        return f"Error: Invalid UUID format"
+
+    # Parse status if provided
+    proc_status = None
+    if status:
+        try:
+            proc_status = ProcedureStatus(status.lower().replace(" ", "-"))
+        except ValueError:
+            logger.warning(f"Invalid procedure status: {status}")
+            valid = ", ".join([s.value for s in ProcedureStatus])
+            return f"Error: Invalid status '{status}'. Use: {valid}"
+
+    # Parse date if provided
+    parsed_date = _parse_date(performed_date)
+
+    with get_db() as db:
+        patient = PatientRepository.get_by_id(db, patient_uuid)
+        if not patient:
+            return f"Error: Patient not found with ID: {patient_id}"
+
+        procedure = ProcedureRepository.get_by_id(db, procedure_uuid)
+        if not procedure:
+            return f"Error: Procedure not found with ID: {procedure_id}"
+        if procedure.patient_id != patient_uuid:
+            return f"Error: Procedure does not belong to this patient"
+
+        update_data = ProcedureUpdate(
+            display_name=display_name,
+            status=proc_status,
+            performed_date=parsed_date,
+            performer=performer,
+            body_site=body_site,
+            notes=notes,
+        )
+
+        updated = ProcedureRepository.update(db, procedure_uuid, update_data)
+        if not updated:
+            return "Error: Failed to update procedure"
+
+        retriever = get_retriever()
+        retriever.remove_document("procedure", procedure_uuid)
+        retriever.add_document(
+            patient_id=patient_uuid,
+            doc_id=procedure_uuid,
+            content=updated.to_document(),
+            doc_type="procedure",
+        )
+
+        logger.info(f"Successfully updated procedure: {updated.display_name}")
+        return (
+            f"Successfully updated procedure: {updated.display_name}\n"
+            f"- Status: {updated.status}\n"
+            f"- Date: {updated.performed_date or 'Not specified'}\n"
+            f"- Performer: {updated.performer or 'Not specified'}\n"
+            f"- Body Site: {updated.body_site or 'Not specified'}\n"
+            f"- Notes: {updated.notes or 'None'}"
+        )
+
+
+@tool
+def delete_procedure(patient_id: str, procedure_id: str) -> str:
+    """
+    Delete a procedure from the patient's record.
+
+    IMPORTANT: Before calling this tool, you MUST first call get_procedures() to retrieve
+    the actual procedure IDs from the database. Never guess or fabricate UUIDs.
+
+    Args:
+        patient_id: The UUID of the patient.
+        procedure_id: The UUID of the procedure to delete (obtained from get_procedures).
+
+    Returns:
+        Confirmation message.
+    """
+    logger.info(f"delete_procedure called: patient_id={patient_id}, procedure_id={procedure_id}")
+    try:
+        patient_uuid = UUID(patient_id)
+        procedure_uuid = UUID(procedure_id)
+    except ValueError as e:
+        logger.warning(f"Invalid UUID format: {e}")
+        return f"Error: Invalid UUID format"
+
+    with get_db() as db:
+        patient = PatientRepository.get_by_id(db, patient_uuid)
+        if not patient:
+            return f"Error: Patient not found with ID: {patient_id}"
+
+        procedure = ProcedureRepository.get_by_id(db, procedure_uuid)
+        if not procedure:
+            return f"Error: Procedure not found with ID: {procedure_id}"
+        if procedure.patient_id != patient_uuid:
+            return f"Error: Procedure does not belong to this patient"
+
+        procedure_name = procedure.display_name
+
+        if not ProcedureRepository.delete(db, procedure_uuid):
+            return "Error: Failed to delete procedure"
+
+        retriever = get_retriever()
+        retriever.remove_document("procedure", procedure_uuid)
+
+        logger.info(f"Successfully deleted procedure: {procedure_name}")
+        return f"Successfully deleted procedure: {procedure_name}"
 
 
 @tool
@@ -2311,6 +2612,7 @@ PATIENT_DATA_TOOLS = [
     get_lab_results,
     get_family_history,
     get_social_history,
+    get_procedures,
     # Write tools for adding new data
     add_condition,
     add_medication,
@@ -2319,6 +2621,7 @@ PATIENT_DATA_TOOLS = [
     add_lab_result,
     add_family_history,
     add_social_history,
+    add_procedure,
     # Update tools for modifying existing data
     update_condition,
     update_medication,
@@ -2327,6 +2630,7 @@ PATIENT_DATA_TOOLS = [
     update_lab_result,
     update_family_history,
     update_social_history,
+    update_procedure,
     # Delete tools for removing data
     delete_condition,
     delete_medication,
@@ -2335,6 +2639,7 @@ PATIENT_DATA_TOOLS = [
     delete_lab_result,
     delete_family_history,
     delete_social_history,
+    delete_procedure,
 ]
 
 # Read-only tools for Health Coach (no write operations)
@@ -2349,6 +2654,7 @@ HEALTH_COACH_TOOLS = [
     get_lab_results,
     get_family_history,
     get_social_history,
+    get_procedures,
     # Clinical history search for cross-mode context
     search_clinical_history,
 ]

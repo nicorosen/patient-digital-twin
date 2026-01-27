@@ -19,9 +19,14 @@ from src.models import Base
 # Get settings
 settings = get_settings()
 
+# Fix Supabase/Heroku-style postgres:// URLs (SQLAlchemy requires postgresql://)
+db_url = settings.database_url
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
 # Create engine
 engine = create_engine(
-    settings.database_url,
+    db_url,
     echo=False,  # Disable SQL logging to reduce terminal noise
     pool_pre_ping=True,  # Check connection health
     pool_size=5,

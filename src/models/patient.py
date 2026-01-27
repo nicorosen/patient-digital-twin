@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from src.models.clinical_extended import (
         FamilyHistory,
         LabResult,
+        Procedure,
         SocialHistory,
         VitalSigns,
     )
@@ -83,6 +84,12 @@ class Patient(Base, UUIDMixin, TimestampMixin):
     )
     social_history: Mapped[List["SocialHistory"]] = relationship(
         "SocialHistory",
+        back_populates="patient",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    procedures: Mapped[List["Procedure"]] = relationship(
+        "Procedure",
         back_populates="patient",
         cascade="all, delete-orphan",
         lazy="selectin",
