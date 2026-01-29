@@ -19,6 +19,7 @@ def get_chat_model(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    streaming: bool = False,
 ) -> BaseChatModel:
     """
     Factory function to create an LLM instance based on provider.
@@ -28,6 +29,7 @@ def get_chat_model(
                   If not specified, uses settings.llm_provider.
         model: Model name override. If not specified, uses settings.model_name.
         max_tokens: Max tokens override. If not specified, uses settings.max_tokens.
+        streaming: Whether to enable streaming responses. Default False.
 
     Returns:
         A configured LangChain chat model instance.
@@ -76,6 +78,8 @@ def get_chat_model(
             model=model,
             api_key=settings.anthropic_api_key,
             max_tokens=max_tokens,
+            streaming=streaming,
+            model_kwargs={"extra_headers": {"anthropic-beta": "prompt-caching-2024-07-31"}},
         )
 
     elif provider == "openai":
@@ -90,6 +94,7 @@ def get_chat_model(
             model=model,
             api_key=settings.openai_api_key,
             max_tokens=max_tokens,
+            streaming=streaming,
         )
 
     elif provider == "google":
@@ -104,6 +109,7 @@ def get_chat_model(
             model=model,
             google_api_key=settings.google_api_key,
             max_output_tokens=max_tokens,
+            streaming=streaming,
         )
 
     else:

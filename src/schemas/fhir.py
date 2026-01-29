@@ -18,6 +18,14 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from src.schemas.clinical_extended import (
+    FamilyHistorySchema,
+    LabResultSchema,
+    ProcedureSchema,
+    SocialHistorySchema,
+    VitalSignsSchema,
+)
+
 
 # =============================================================================
 # ENUMS (FHIR Value Sets)
@@ -345,12 +353,12 @@ class PatientProfile(BaseSchema):
     conditions: list[ConditionSchema] = Field(default_factory=list)
     medications: list[MedicationSchema] = Field(default_factory=list)
     allergies: list[AllergySchema] = Field(default_factory=list)
-    # Extended clinical data (using Any for backwards compatibility)
-    vital_signs: list = Field(default_factory=list)
-    lab_results: list = Field(default_factory=list)
-    family_history: list = Field(default_factory=list)
-    social_history: list = Field(default_factory=list)
-    procedures: list = Field(default_factory=list)
+    # Extended clinical data
+    vital_signs: list[VitalSignsSchema] = Field(default_factory=list)
+    lab_results: list[LabResultSchema] = Field(default_factory=list)
+    family_history: list[FamilyHistorySchema] = Field(default_factory=list)
+    social_history: list[SocialHistorySchema] = Field(default_factory=list)
+    procedures: list[ProcedureSchema] = Field(default_factory=list)
 
     @property
     def active_conditions(self) -> list[ConditionSchema]:

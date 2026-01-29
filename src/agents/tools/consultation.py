@@ -7,6 +7,8 @@ Enables the Medical Assistant to consult with specialist agents:
 - Returns structured clinical assessments
 """
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from uuid import UUID
 
@@ -382,11 +384,15 @@ def consult_medical_board(patient_id: str, clinical_question: str, specialists: 
             nephrology, dermatology
     """
     logger.info(f"consult_medical_board called: specialists={specialists}")
-    results = []
-    for spec_name in specialists:
+
+    def _run_one(spec_name: str) -> str:
         header = f"## {spec_name.replace('_', ' ').title()} Opinion\n\n"
         result = _consult_specialist(spec_name, patient_id, clinical_question)
-        results.append(header + result)
+        return header + result
+
+    with ThreadPoolExecutor(max_workers=len(specialists)) as executor:
+        results = list(executor.map(_run_one, specialists))
+
     return "\n\n---\n\n".join(results)
 
 

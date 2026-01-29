@@ -49,14 +49,10 @@ if _os.environ.get("LANGCHAIN_TRACING_V2") == "true":
     logger.info(f"LangSmith tracing enabled, project={_os.environ.get('LANGCHAIN_PROJECT', 'default')}")
 
 
-def get_authenticator():
-    """Create and return the authenticator instance.
-
-    Uses database credentials if available, falls back to secrets for backwards compatibility.
-    """
+@st.cache_data(ttl=600)
+def _get_credentials():
+    """Cached fetch of user credentials from database."""
     credentials = {"usernames": {}}
-
-    # Try to load credentials from database first
     try:
         with get_db() as db:
             users = UserRepository.get_all(db, active_only=True)
@@ -65,13 +61,12 @@ def get_authenticator():
                     credentials["usernames"][user.username] = {
                         "name": user.name,
                         "email": user.email,
-                        "password": user.hashed_password,  # Already hashed
+                        "password": user.hashed_password,
                     }
                 logger.debug(f"Loaded {len(users)} users from database")
     except Exception as e:
         logger.warning(f"Could not load users from database: {e}")
 
-    # Fall back to secrets if no database users
     if not credentials["usernames"]:
         if "credentials" in st.secrets and "usernames" in st.secrets["credentials"]:
             for username, user_data in st.secrets["credentials"]["usernames"].items():
@@ -81,8 +76,17 @@ def get_authenticator():
                     "password": user_data["password"],
                 }
             logger.debug("Using credentials from secrets (fallback)")
+    return credentials
 
-    # Create authenticator
+
+def get_authenticator():
+    """Create and return the authenticator instance.
+
+    Credentials are cached; the Authenticate object is recreated each run
+    because it uses widgets internally (cookie manager).
+    """
+    credentials = _get_credentials()
+
     authenticator = stauth.Authenticate(
         credentials,
         st.secrets["auth"]["cookie_name"],
@@ -93,6 +97,7 @@ def get_authenticator():
     return authenticator
 
 
+@st.cache_data(ttl=300)
 def get_user_from_db(username: str) -> dict | None:
     """Get user info from database by username.
 
@@ -124,6 +129,7 @@ AGENT_ACCESS = {
 }
 
 
+@st.cache_resource
 def ensure_patients_indexed():
     """Ensure all patients are indexed in the vector store for RAG search."""
     from src.rag import get_retriever
@@ -143,6 +149,93 @@ def ensure_patients_indexed():
                 indexed_count += 1
         if indexed_count > 0:
             logger.info(f"Auto-indexed {indexed_count} patients for RAG search")
+    return True
+
+
+def _get_patient_profile(patient_id):
+    """Session-state cached fetch of patient profile data.
+
+    PatientRepository.get_profile() returns a PatientProfile containing
+    Pydantic schema objects (not ORM models), so no expunge is needed.
+    """
+    import time
+
+    cache_key = f"_profile_cache_{patient_id}"
+    cache_ts_key = f"_profile_cache_ts_{patient_id}"
+    now = time.time()
+    if (
+        cache_key in st.session_state
+        and cache_ts_key in st.session_state
+        and now - st.session_state[cache_ts_key] < 300
+    ):
+        return st.session_state[cache_key]
+
+    with get_db() as db:
+        profile = PatientRepository.get_profile(db, patient_id)
+    st.session_state[cache_key] = profile
+    st.session_state[cache_ts_key] = now
+    return profile
+
+
+def _get_audit_logs(patient_id, limit=10):
+    """Session-state cached fetch of audit logs."""
+    import time
+    from src.database import get_db_session
+
+    cache_key = f"_audit_cache_{patient_id}_{limit}"
+    cache_ts_key = f"_audit_cache_ts_{patient_id}_{limit}"
+    now = time.time()
+    if (
+        cache_key in st.session_state
+        and cache_ts_key in st.session_state
+        and now - st.session_state[cache_ts_key] < 300
+    ):
+        return st.session_state[cache_key]
+
+    db = get_db_session()
+    try:
+        logs = AuditLogRepository.get_by_patient(db, patient_id, limit=limit)
+        for log in logs:
+            db.expunge(log)
+        st.session_state[cache_key] = logs
+        st.session_state[cache_ts_key] = now
+        return logs
+    finally:
+        db.close()
+
+
+def _clear_profile_and_audit_caches():
+    """Clear session_state caches for profile and audit data."""
+    keys_to_remove = [
+        k for k in st.session_state
+        if k.startswith(("_profile_cache", "_audit_cache"))
+    ]
+    for k in keys_to_remove:
+        del st.session_state[k]
+
+
+@st.cache_data(ttl=120)
+def _get_conversation_summaries(patient_id, mode, limit=10):
+    """Cached fetch of conversation summaries."""
+    from uuid import UUID
+    with get_db() as db:
+        return ConversationSessionRepository.get_session_summaries(
+            db, patient_id=UUID(patient_id), mode=mode, limit=limit,
+        )
+
+
+@st.cache_data(ttl=300)
+def _get_patient_list(user_role, user_id):
+    """Cached fetch of patient list for sidebar."""
+    from uuid import UUID
+    with get_db() as db:
+        if user_role == "admin":
+            patients = PatientRepository.get_all(db)
+        elif user_id:
+            patients = PatientMemberRepository.get_patients_for_user(db, UUID(user_id))
+        else:
+            patients = PatientRepository.get_all(db)
+        return {f"{p.first_name} {p.last_name}": str(p.id) for p in patients}
 
 
 # Page configuration
@@ -382,6 +475,7 @@ def start_new_chat():
     st.session_state.messages = []
     st.session_state.current_session_id = None
     st.session_state.session_list_refresh += 1
+    _get_conversation_summaries.clear()
 
 
 def delete_session(session_id: str):
@@ -399,6 +493,7 @@ def delete_session(session_id: str):
         st.session_state.current_session_id = None
 
     st.session_state.session_list_refresh += 1
+    _get_conversation_summaries.clear()
 
 
 def rename_session(session_id: str, new_title: str):
@@ -415,8 +510,10 @@ def rename_session(session_id: str, new_title: str):
 
     st.session_state.editing_session_id = None
     st.session_state.session_list_refresh += 1
+    _get_conversation_summaries.clear()
 
 
+@st.fragment
 def display_conversation_sidebar():
     """Display conversation session sidebar section."""
     from uuid import UUID
@@ -434,13 +531,7 @@ def display_conversation_sidebar():
     mode = get_conversation_mode()
     mode_label = "Clinical" if mode == "clinical" else "Coach"
 
-    with get_db() as db:
-        summaries = ConversationSessionRepository.get_session_summaries(
-            db,
-            patient_id=UUID(st.session_state.patient_id),
-            mode=mode,
-            limit=10,
-        )
+    summaries = _get_conversation_summaries(st.session_state.patient_id, mode, limit=10)
 
     if not summaries:
         st.caption(f"No {mode_label} conversations yet")
@@ -513,152 +604,151 @@ def display_conversation_sidebar():
 
 def display_patient_summary_card(patient_id):
     """Display compact patient summary card in sidebar."""
-    with get_db() as db:
-        profile = PatientRepository.get_profile(db, patient_id)
-        if not profile:
-            return
+    profile = _get_patient_profile(patient_id)
+    if not profile:
+        return
 
-        patient = profile.patient
-        active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-        active_meds = [m for m in profile.medications if m.status == "active"]
+    patient = profile.patient
+    active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+    active_meds = [m for m in profile.medications if m.status == "active"]
 
-        st.markdown(
-            f"**{patient.age}y** {patient.gender.value.capitalize()} · "
-            f"{len(active_conditions)} conditions · "
-            f"{len(active_meds)} meds · "
-            f"{len(profile.allergies)} allergies"
-        )
+    st.markdown(
+        f"**{patient.age}y** {patient.gender.value.capitalize()} · "
+        f"{len(active_conditions)} conditions · "
+        f"{len(active_meds)} meds · "
+        f"{len(profile.allergies)} allergies"
+    )
 
 
 def display_health_record_tab(patient_id):
     """Display full health record with card-based layout."""
-    with get_db() as db:
-        profile = PatientRepository.get_profile(db, patient_id)
-        if not profile:
-            st.warning("Patient not found")
-            return
+    profile = _get_patient_profile(patient_id)
+    if not profile:
+        st.warning("Patient not found")
+        return
 
-        patient = profile.patient
+    patient = profile.patient
 
-        # Demographics - inline compact
-        st.markdown(
-            f"**{patient.first_name} {patient.last_name}** · "
-            f"{patient.age}y · {patient.gender.value.capitalize()} · "
-            f"DOB {patient.date_of_birth}"
-        )
+    # Demographics - inline compact
+    st.markdown(
+        f"**{patient.first_name} {patient.last_name}** · "
+        f"{patient.age}y · {patient.gender.value.capitalize()} · "
+        f"DOB {patient.date_of_birth}"
+    )
 
-        # Row 1: Conditions | Medications | Allergies
-        c1, c2, c3 = st.columns(3)
+    # Row 1: Conditions | Medications | Allergies
+    c1, c2, c3 = st.columns(3)
 
-        with c1:
-            with st.container(border=True):
-                st.markdown("**Conditions**")
-                active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-                if active_conditions:
-                    for condition in active_conditions:
-                        sev = {"mild": "🟢", "moderate": "🟡", "severe": "🔴"}.get(condition.severity, "")
-                        st.markdown(f"{sev} {condition.display_name}", help=condition.notes or "")
-                else:
-                    st.caption("None recorded")
+    with c1:
+        with st.container(border=True):
+            st.markdown("**Conditions**")
+            active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+            if active_conditions:
+                for condition in active_conditions:
+                    sev = {"mild": "🟢", "moderate": "🟡", "severe": "🔴"}.get(condition.severity, "")
+                    st.markdown(f"{sev} {condition.display_name}", help=condition.notes or "")
+            else:
+                st.caption("None recorded")
 
-        with c2:
-            with st.container(border=True):
-                st.markdown("**Medications**")
-                active_meds = [m for m in profile.medications if m.status == "active"]
-                if active_meds:
-                    for med in active_meds:
-                        dosage = f" {med.dosage}" if med.dosage else ""
-                        freq = f" · {med.frequency}" if med.frequency else ""
-                        st.markdown(f"{med.display_name}{dosage}{freq}", help=med.reason or "")
-                else:
-                    st.caption("None recorded")
+    with c2:
+        with st.container(border=True):
+            st.markdown("**Medications**")
+            active_meds = [m for m in profile.medications if m.status == "active"]
+            if active_meds:
+                for med in active_meds:
+                    dosage = f" {med.dosage}" if med.dosage else ""
+                    freq = f" · {med.frequency}" if med.frequency else ""
+                    st.markdown(f"{med.display_name}{dosage}{freq}", help=med.reason or "")
+            else:
+                st.caption("None recorded")
 
-        with c3:
-            with st.container(border=True):
-                st.markdown("**Allergies**")
-                if profile.allergies:
-                    for allergy in profile.allergies:
-                        crit = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "")
-                        st.markdown(f"{crit} {allergy.substance}", help=allergy.reaction or "")
-                else:
-                    st.caption("No known allergies")
+    with c3:
+        with st.container(border=True):
+            st.markdown("**Allergies**")
+            if profile.allergies:
+                for allergy in profile.allergies:
+                    crit = {"high": "🔴", "low": "🟡"}.get(allergy.criticality, "")
+                    st.markdown(f"{crit} {allergy.substance}", help=allergy.reaction or "")
+            else:
+                st.caption("No known allergies")
 
-        # Row 2: Procedures | Vital Signs | Lab Results
-        c4, c5, c6 = st.columns(3)
+    # Row 2: Procedures | Vital Signs | Lab Results
+    c4, c5, c6 = st.columns(3)
 
-        with c4:
-            with st.container(border=True):
-                st.markdown("**Procedures**")
-                if profile.procedures:
-                    for proc in profile.procedures:
-                        status_icon = {"completed": "✓", "planned": "◯", "in-progress": "⟳"}.get(proc.status, "")
-                        date_str = f" · {proc.performed_date}" if proc.performed_date else ""
-                        st.markdown(f"{status_icon} {proc.display_name}{date_str}", help=proc.notes or "")
-                else:
-                    st.caption("None recorded")
+    with c4:
+        with st.container(border=True):
+            st.markdown("**Procedures**")
+            if profile.procedures:
+                for proc in profile.procedures:
+                    status_icon = {"completed": "✓", "planned": "◯", "in-progress": "⟳"}.get(proc.status, "")
+                    date_str = f" · {proc.performed_date}" if proc.performed_date else ""
+                    st.markdown(f"{status_icon} {proc.display_name}{date_str}", help=proc.notes or "")
+            else:
+                st.caption("None recorded")
 
-        with c5:
-            with st.container(border=True):
-                st.markdown("**Vital Signs**")
-                if profile.vital_signs:
-                    latest = sorted(profile.vital_signs, key=lambda v: v.recorded_at, reverse=True)[0]
-                    items = []
-                    if latest.systolic_bp and latest.diastolic_bp:
-                        items.append(f"BP {latest.systolic_bp}/{latest.diastolic_bp}")
-                    if latest.heart_rate:
-                        items.append(f"HR {latest.heart_rate}")
-                    if latest.temperature:
-                        items.append(f"Temp {latest.temperature}°C")
-                    if latest.oxygen_saturation:
-                        items.append(f"SpO2 {latest.oxygen_saturation}%")
-                    if latest.weight_kg:
-                        items.append(f"Wt {latest.weight_kg}kg")
-                    for item in items:
-                        st.markdown(item)
-                    st.caption(latest.recorded_at.strftime('%Y-%m-%d'))
-                else:
-                    st.caption("None recorded")
+    with c5:
+        with st.container(border=True):
+            st.markdown("**Vital Signs**")
+            if profile.vital_signs:
+                latest = sorted(profile.vital_signs, key=lambda v: v.recorded_at, reverse=True)[0]
+                items = []
+                if latest.systolic_bp and latest.diastolic_bp:
+                    items.append(f"BP {latest.systolic_bp}/{latest.diastolic_bp}")
+                if latest.heart_rate:
+                    items.append(f"HR {latest.heart_rate}")
+                if latest.temperature:
+                    items.append(f"Temp {latest.temperature}°C")
+                if latest.oxygen_saturation:
+                    items.append(f"SpO2 {latest.oxygen_saturation}%")
+                if latest.weight_kg:
+                    items.append(f"Wt {latest.weight_kg}kg")
+                for item in items:
+                    st.markdown(item)
+                st.caption(latest.recorded_at.strftime('%Y-%m-%d'))
+            else:
+                st.caption("None recorded")
 
-        with c6:
-            with st.container(border=True):
-                st.markdown("**Lab Results**")
-                if profile.lab_results:
-                    for lab in profile.lab_results[:5]:
-                        interp = {"normal": "🟢", "abnormal": "🟡", "critical": "🔴"}.get(lab.interpretation, "")
-                        val = f"{lab.value}"
-                        if lab.unit:
-                            val += f" {lab.unit}"
-                        st.markdown(f"{interp} {lab.test_name}: {val}")
-                else:
-                    st.caption("None recorded")
+    with c6:
+        with st.container(border=True):
+            st.markdown("**Lab Results**")
+            if profile.lab_results:
+                for lab in profile.lab_results[:5]:
+                    interp = {"normal": "🟢", "abnormal": "🟡", "critical": "🔴"}.get(lab.interpretation, "")
+                    val = f"{lab.value}"
+                    if lab.unit:
+                        val += f" {lab.unit}"
+                    st.markdown(f"{interp} {lab.test_name}: {val}")
+            else:
+                st.caption("None recorded")
 
-        # Row 3: Family History | Social History
-        c7, c8 = st.columns(2)
+    # Row 3: Family History | Social History
+    c7, c8 = st.columns(2)
 
-        with c7:
-            with st.container(border=True):
-                st.markdown("**Family History**")
-                if profile.family_history:
-                    for fh in profile.family_history:
-                        onset = f" (age {fh.onset_age})" if fh.onset_age else ""
-                        rel = fh.relation.replace("_", " ").title()
-                        st.markdown(f"{rel}: {fh.condition_name}{onset}", help=fh.notes or "")
-                else:
-                    st.caption("None recorded")
+    with c7:
+        with st.container(border=True):
+            st.markdown("**Family History**")
+            if profile.family_history:
+                for fh in profile.family_history:
+                    onset = f" (age {fh.onset_age})" if fh.onset_age else ""
+                    rel = fh.relation.replace("_", " ").title()
+                    st.markdown(f"{rel}: {fh.condition_name}{onset}", help=fh.notes or "")
+            else:
+                st.caption("None recorded")
 
-        with c8:
-            with st.container(border=True):
-                st.markdown("**Social History**")
-                if profile.social_history:
-                    for sh in profile.social_history:
-                        status_icon = {"current": "🔵", "former": "🟡", "never": "🟢", "daily": "🔴"}.get(sh.status, "⚪")
-                        cat = sh.category.replace("_", " ").title()
-                        desc = f": {sh.description}" if sh.description else ""
-                        st.markdown(f"{status_icon} {cat} · {sh.status}{desc}")
-                else:
-                    st.caption("None recorded")
+    with c8:
+        with st.container(border=True):
+            st.markdown("**Social History**")
+            if profile.social_history:
+                for sh in profile.social_history:
+                    status_icon = {"current": "🔵", "former": "🟡", "never": "🟢", "daily": "🔴"}.get(sh.status, "⚪")
+                    cat = sh.category.replace("_", " ").title()
+                    desc = f": {sh.description}" if sh.description else ""
+                    st.markdown(f"{status_icon} {cat} · {sh.status}{desc}")
+            else:
+                st.caption("None recorded")
 
 
+@st.fragment
 def display_member_management(patient_id):
     """Display access management section."""
     from uuid import UUID
@@ -747,168 +837,153 @@ def display_member_management(patient_id):
 
 def display_audit_log(patient_id):
     """Display consultation audit log with visual cards."""
-    with get_db() as db:
-        logs = AuditLogRepository.get_by_patient(db, patient_id, limit=10)
+    logs = _get_audit_logs(patient_id, limit=10)
 
-        if not logs:
-            st.info("No consultations yet")
-            return
+    if not logs:
+        st.info("No consultations yet")
+        return
 
-        for log in logs:
-            with st.expander(
-                f"📋 {log.specialist_type.replace('_', ' ').title()} - {log.timestamp.strftime('%Y-%m-%d %H:%M')}"
-            ):
-                st.markdown(f"**Question:** {log.clinical_question}")
+    for log in logs:
+        with st.expander(
+            f"📋 {log.specialist_type.replace('_', ' ').title()} - {log.timestamp.strftime('%Y-%m-%d %H:%M')}"
+        ):
+            st.markdown(f"**Question:** {log.clinical_question}")
 
-                # Data shared as compact metrics
-                st.markdown("**Data Shared:**")
-                data = log.data_shared
-                cols = st.columns(4)
-                cols[0].metric("Age", data.get("age", "N/A"))
-                cols[1].metric("Gender", str(data.get("gender", "N/A")).capitalize())
-                cols[2].metric("Conditions", len(data.get("conditions", [])))
-                cols[3].metric("Medications", len(data.get("medications", [])))
+            st.markdown("**Data Shared:**")
+            data = log.data_shared
+            cols = st.columns(4)
+            cols[0].metric("Age", data.get("age", "N/A"))
+            cols[1].metric("Gender", str(data.get("gender", "N/A")).capitalize())
+            cols[2].metric("Conditions", len(data.get("conditions", [])))
+            cols[3].metric("Medications", len(data.get("medications", [])))
 
-                # Specialist response
-                st.markdown("---")
-                if isinstance(log.specialist_response, dict):
-                    st.markdown(f"**Assessment:** {log.specialist_response.get('assessment', 'N/A')}")
-                    if log.specialist_response.get("recommendations"):
-                        st.markdown("**Recommendations:**")
-                        for rec in log.specialist_response["recommendations"]:
-                            priority = rec.get("priority", "routine")
-                            priority_emoji = {"urgent": "🔴", "high": "🟠", "routine": "🟡", "low": "🟢"}.get(priority, "⚪")
-                            st.markdown(f"{priority_emoji} **[{priority.upper()}]** {rec.get('action', 'N/A')}")
+            st.markdown("---")
+            if isinstance(log.specialist_response, dict):
+                st.markdown(f"**Assessment:** {log.specialist_response.get('assessment', 'N/A')}")
+                if log.specialist_response.get("recommendations"):
+                    st.markdown("**Recommendations:**")
+                    for rec in log.specialist_response["recommendations"]:
+                        priority = rec.get("priority", "routine")
+                        priority_emoji = {"urgent": "🔴", "high": "🟠", "routine": "🟡", "low": "🟢"}.get(priority, "⚪")
+                        st.markdown(f"{priority_emoji} **[{priority.upper()}]** {rec.get('action', 'N/A')}")
 
 
 def display_health_metrics(patient_id):
     """Display health metrics dashboard at top of main area."""
-    with get_db() as db:
-        profile = PatientRepository.get_profile(db, patient_id)
-        if not profile:
-            return
+    profile = _get_patient_profile(patient_id)
+    if not profile:
+        return
 
-        # Get counts
-        active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-        active_meds = [m for m in profile.medications if m.status == "active"]
-        allergies = profile.allergies
+    active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+    active_meds = [m for m in profile.medications if m.status == "active"]
+    allergies = profile.allergies
 
-        # Get last consultation
-        logs = AuditLogRepository.get_by_patient(db, patient_id, limit=1)
-        last_consult = logs[0].timestamp.strftime("%m/%d") if logs else "None"
+    logs = _get_audit_logs(patient_id, limit=1)
+    last_consult = logs[0].timestamp.strftime("%m/%d") if logs else "None"
 
-        # Display metric cards
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🩺 Conditions", len(active_conditions))
-        with col2:
-            st.metric("💊 Medications", len(active_meds))
-        with col3:
-            st.metric("⚠️ Allergies", len(allergies))
-        with col4:
-            st.metric("📋 Last Consult", last_consult)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("🩺 Conditions", len(active_conditions))
+    with col2:
+        st.metric("💊 Medications", len(active_meds))
+    with col3:
+        st.metric("⚠️ Allergies", len(allergies))
+    with col4:
+        st.metric("📋 Last Consult", last_consult)
 
 
 def display_medication_timeline(patient_id):
     """Display medication timeline chart."""
-    with get_db() as db:
-        profile = PatientRepository.get_profile(db, patient_id)
-        if not profile or not profile.medications:
-            return
+    profile = _get_patient_profile(patient_id)
+    if not profile or not profile.medications:
+        return
 
-        # Filter medications with start dates
-        meds_with_dates = [m for m in profile.medications if m.start_date]
-        if not meds_with_dates:
-            st.info("No medication timeline data available")
-            return
+    meds_with_dates = [m for m in profile.medications if m.start_date]
+    if not meds_with_dates:
+        st.info("No medication timeline data available")
+        return
 
-        # Prepare data for timeline
-        data = []
-        for med in meds_with_dates:
-            end_date = med.end_date if med.end_date else "2026-12-31"
-            data.append({
-                "Medication": med.display_name,
-                "Start": med.start_date.isoformat() if hasattr(med.start_date, 'isoformat') else str(med.start_date),
-                "End": end_date.isoformat() if hasattr(end_date, 'isoformat') else str(end_date),
-                "Status": med.status.capitalize() if med.status else "Active",
-            })
+    data = []
+    for med in meds_with_dates:
+        end_date = med.end_date if med.end_date else "2026-12-31"
+        data.append({
+            "Medication": med.display_name,
+            "Start": med.start_date.isoformat() if hasattr(med.start_date, 'isoformat') else str(med.start_date),
+            "End": end_date.isoformat() if hasattr(end_date, 'isoformat') else str(end_date),
+            "Status": med.status.capitalize() if med.status else "Active",
+        })
 
-        if data:
-            fig = px.timeline(
-                data,
-                x_start="Start",
-                x_end="End",
-                y="Medication",
-                color="Status",
-                title="Medication Timeline",
-                color_discrete_map={"Active": "#4CAF50", "Completed": "#9E9E9E", "Stopped": "#F44336"},
-            )
-            fig.update_layout(height=max(200, len(data) * 40))
-            st.plotly_chart(fig, use_container_width=True)
+    if data:
+        fig = px.timeline(
+            data,
+            x_start="Start",
+            x_end="End",
+            y="Medication",
+            color="Status",
+            title="Medication Timeline",
+            color_discrete_map={"Active": "#4CAF50", "Completed": "#9E9E9E", "Stopped": "#F44336"},
+        )
+        fig.update_layout(height=max(200, len(data) * 40))
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def display_severity_chart(patient_id):
     """Display condition severity distribution donut chart."""
-    with get_db() as db:
-        profile = PatientRepository.get_profile(db, patient_id)
-        if not profile or not profile.conditions:
-            return
+    profile = _get_patient_profile(patient_id)
+    if not profile or not profile.conditions:
+        return
 
-        active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
-        if not active_conditions:
-            return
+    active_conditions = [c for c in profile.conditions if c.clinical_status == "active"]
+    if not active_conditions:
+        return
 
-        # Count severities
-        severity_counts = {"Mild": 0, "Moderate": 0, "Severe": 0, "Unknown": 0}
-        for c in active_conditions:
-            severity = (c.severity or "unknown").capitalize()
-            if severity in severity_counts:
-                severity_counts[severity] += 1
-            else:
-                severity_counts["Unknown"] += 1
+    severity_counts = {"Mild": 0, "Moderate": 0, "Severe": 0, "Unknown": 0}
+    for c in active_conditions:
+        severity = (c.severity or "unknown").capitalize()
+        if severity in severity_counts:
+            severity_counts[severity] += 1
+        else:
+            severity_counts["Unknown"] += 1
 
-        # Remove zeros
-        severity_counts = {k: v for k, v in severity_counts.items() if v > 0}
+    severity_counts = {k: v for k, v in severity_counts.items() if v > 0}
 
-        if severity_counts:
-            fig = go.Figure(data=[go.Pie(
-                labels=list(severity_counts.keys()),
-                values=list(severity_counts.values()),
-                hole=0.4,
-                marker_colors=["#90EE90", "#FFD700", "#FF6B6B", "#CCCCCC"],
-            )])
-            fig.update_layout(
-                title="Condition Severity",
-                height=300,
-                showlegend=True,
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    if severity_counts:
+        fig = go.Figure(data=[go.Pie(
+            labels=list(severity_counts.keys()),
+            values=list(severity_counts.values()),
+            hole=0.4,
+            marker_colors=["#90EE90", "#FFD700", "#FF6B6B", "#CCCCCC"],
+        )])
+        fig.update_layout(
+            title="Condition Severity",
+            height=300,
+            showlegend=True,
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def display_consultation_history_chart(patient_id):
     """Display consultation history bar chart."""
-    with get_db() as db:
-        logs = AuditLogRepository.get_by_patient(db, patient_id, limit=50)
+    logs = _get_audit_logs(patient_id, limit=50)
 
-        if not logs:
-            st.info("No consultation history to display")
-            return
+    if not logs:
+        st.info("No consultation history to display")
+        return
 
-        # Group by month
-        monthly = {}
-        for log in logs:
-            month = log.timestamp.strftime("%Y-%m")
-            monthly[month] = monthly.get(month, 0) + 1
+    monthly = {}
+    for log in logs:
+        month = log.timestamp.strftime("%Y-%m")
+        monthly[month] = monthly.get(month, 0) + 1
 
-        if monthly:
-            fig = px.bar(
-                x=list(monthly.keys()),
-                y=list(monthly.values()),
-                title="Consultations Over Time",
-                labels={"x": "Month", "y": "Consultations"},
-            )
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+    if monthly:
+        fig = px.bar(
+            x=list(monthly.keys()),
+            y=list(monthly.values()),
+            title="Consultations Over Time",
+            labels={"x": "Month", "y": "Consultations"},
+        )
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def get_medical_assistant_prompts():
@@ -1000,15 +1075,13 @@ def main():
         st.session_state.user_id = None
         st.session_state.user_role = "patient"
 
-    # Auto-index patients on startup if needed (only once per session)
-    if "patients_indexed" not in st.session_state:
-        try:
-            ensure_patients_indexed()
-            st.session_state.patients_indexed = True
-        except Exception as e:
-            logger.error(f"Failed to index patients: {e}")
-            st.error(f"Database connection error: {e}\n\nPlease ensure DATABASE_URL is configured in your Streamlit secrets.")
-            return
+    # Auto-index patients on startup if needed (cached — runs only once)
+    try:
+        ensure_patients_indexed()
+    except Exception as e:
+        logger.error(f"Failed to index patients: {e}")
+        st.error(f"Database connection error: {e}\n\nPlease ensure DATABASE_URL is configured in your Streamlit secrets.")
+        return
 
     # Sidebar — compact context panel
     with st.sidebar:
@@ -1021,16 +1094,7 @@ def main():
         st.markdown("---")
 
         # Patient Selection
-        with get_db() as db:
-            if st.session_state.user_role == "admin":
-                patients = PatientRepository.get_all(db)
-            elif st.session_state.user_id:
-                patients = PatientMemberRepository.get_patients_for_user(
-                    db, UUID(st.session_state.user_id)
-                )
-            else:
-                patients = PatientRepository.get_all(db)
-            patient_options = {f"{p.first_name} {p.last_name}": str(p.id) for p in patients}
+        patient_options = _get_patient_list(st.session_state.user_role, st.session_state.user_id)
 
         if not patient_options:
             logger.warning("No patients found in database")
@@ -1266,19 +1330,33 @@ def main():
 
             try:
                 patient_uuid = UUID(st.session_state.patient_id)
-                if st.session_state.agent_type == "Health Coach":
-                    agent = HealthCoach(
-                        patient_uuid,
-                        provider=st.session_state.llm_provider,
-                        model=st.session_state.llm_model,
-                    )
+
+                # Cache agent in session_state, recreate only when config changes
+                agent_key = (
+                    st.session_state.patient_id,
+                    st.session_state.agent_type,
+                    st.session_state.llm_provider,
+                    st.session_state.llm_model,
+                    st.session_state.user_role,
+                )
+                if st.session_state.get("_agent_key") != agent_key:
+                    if st.session_state.agent_type == "Health Coach":
+                        agent = HealthCoach(
+                            patient_uuid,
+                            provider=st.session_state.llm_provider,
+                            model=st.session_state.llm_model,
+                        )
+                    else:
+                        agent = MedicalAssistant(
+                            patient_uuid,
+                            user_role=st.session_state.user_role,
+                            provider=st.session_state.llm_provider,
+                            model=st.session_state.llm_model,
+                        )
+                    st.session_state._cached_agent = agent
+                    st.session_state._agent_key = agent_key
                 else:
-                    agent = MedicalAssistant(
-                        patient_uuid,
-                        user_role=st.session_state.user_role,
-                        provider=st.session_state.llm_provider,
-                        model=st.session_state.llm_model,
-                    )
+                    agent = st.session_state._cached_agent
 
                 response = agent.chat(
                     user_prompt,
@@ -1290,8 +1368,9 @@ def main():
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 save_message_to_db("assistant", response)
                 logger.info(f"Agent response generated: agent={st.session_state.agent_type}, length={len(response)}")
-                # Rerun so Health Record tab refreshes with any new data
-                st.rerun()
+                # Clear caches so Health Record tab refreshes with any new data
+                _clear_profile_and_audit_caches()
+                _get_conversation_summaries.clear()
             except Exception as e:
                 logger.error(f"Error generating response: {e}", exc_info=True)
                 status_placeholder.update(label="Error", state="error")

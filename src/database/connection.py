@@ -24,13 +24,18 @@ db_url = settings.database_url
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-# Create engine
+# Detect if using a remote/Neon database (non-localhost)
+_is_remote = "localhost" not in db_url and "127.0.0.1" not in db_url
+
+# Create engine with settings tuned for local vs remote DB
 engine = create_engine(
     db_url,
-    echo=False,  # Disable SQL logging to reduce terminal noise
-    pool_pre_ping=True,  # Check connection health
+    echo=False,
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    # For remote DBs (Neon): keep connections alive, reduce cold-start latency
+    pool_recycle=300 if _is_remote else -1,
 )
 
 # Create session factory
