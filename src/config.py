@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     model_name: str = "gemini-2.5-pro"
     max_tokens: int = 4096
 
+    # Specialist model (faster/cheaper model for specialist consultations)
+    specialist_provider: Optional[str] = None  # Falls back to llm_provider
+    specialist_model: Optional[str] = None  # Falls back to model_name
+
     # Web Search (Tavily)
     tavily_api_key: Optional[str] = None
 

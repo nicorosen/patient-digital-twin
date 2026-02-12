@@ -14,8 +14,7 @@ from uuid import UUID
 
 from langchain_core.tools import tool
 
-from src.agents.specialists import SpecialistResponse, get_specialist
-from src.agents.translation import translate_specialist_response
+from src.agents.specialists import get_specialist
 from src.database import get_db
 from src.database.repositories import (
     AllergyRepository,
@@ -100,46 +99,6 @@ def create_deidentified_context(patient_id: UUID) -> DeidentifiedContext:
         return context
 
 
-def format_specialist_response(response: SpecialistResponse) -> str:
-    """Format the specialist response for return to the agent."""
-    lines = [
-        "## Specialist Consultation Response",
-        "",
-        f"**Confidence:** {response.confidence}",
-        "",
-        "### Assessment",
-        response.assessment,
-        "",
-    ]
-
-    if response.red_flags:
-        lines.append("### Red Flags (Immediate Attention)")
-        for flag in response.red_flags:
-            lines.append(f"- {flag}")
-        lines.append("")
-
-    lines.append("### Recommendations")
-    for i, rec in enumerate(response.recommendations, 1):
-        priority_emoji = {"urgent": "!", "routine": "-", "optional": "~"}.get(
-            rec.priority.lower(), "-"
-        )
-        lines.append(f"{i}. [{priority_emoji}] **{rec.action}** ({rec.priority})")
-        lines.append(f"   *Rationale: {rec.rationale}*")
-    lines.append("")
-
-    if response.guidelines_referenced:
-        lines.append("### Guidelines Referenced")
-        for guideline in response.guidelines_referenced:
-            lines.append(f"- {guideline}")
-        lines.append("")
-
-    if response.limitations:
-        lines.append("### Limitations")
-        lines.append(response.limitations)
-
-    return "\n".join(lines)
-
-
 def _consult_specialist(specialist_name: str, patient_id: str, clinical_question: str) -> str:
     """Shared helper to consult any specialist."""
     logger.info(f"consult_{specialist_name} called: patient_id={patient_id}")
@@ -152,11 +111,8 @@ def _consult_specialist(specialist_name: str, patient_id: str, clinical_question
     try:
         context = create_deidentified_context(patient_uuid)
         specialist = get_specialist(specialist_name)
-        response = specialist.consult(context, clinical_question)
-        logger.info(
-            f"{specialist_name} response: confidence={response.confidence}, "
-            f"recommendations={len(response.recommendations)}, red_flags={len(response.red_flags)}"
-        )
+        response_text = specialist.consult(context, clinical_question)
+        logger.info(f"{specialist_name} response: {len(response_text)} chars")
 
         # Log the consultation for audit
         with get_db() as db:
@@ -172,25 +128,10 @@ def _consult_specialist(specialist_name: str, patient_id: str, clinical_question
                     "medications": context.medications,
                     "allergies": context.allergies,
                 },
-                specialist_response={
-                    "assessment": response.assessment,
-                    "recommendations": [
-                        {
-                            "action": r.action,
-                            "priority": r.priority,
-                            "rationale": r.rationale,
-                        }
-                        for r in response.recommendations
-                    ],
-                    "red_flags": response.red_flags,
-                    "guidelines_referenced": response.guidelines_referenced,
-                    "confidence": response.confidence,
-                    "limitations": response.limitations,
-                },
+                specialist_response={"text": response_text},
             )
 
-        translated_response = translate_specialist_response(response)
-        return translated_response
+        return response_text
 
     except ValueError as e:
         logger.error(f"Value error in consultation: {e}")

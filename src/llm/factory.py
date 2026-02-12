@@ -14,6 +14,9 @@ from src.logging_config import get_logger
 
 logger = get_logger("llm.factory")
 
+# Cache LLM instances to avoid creating new ones per call
+_llm_cache: dict[tuple, BaseChatModel] = {}
+
 
 def get_chat_model(
     provider: Optional[str] = None,
@@ -54,6 +57,12 @@ def get_chat_model(
     model = model or settings.model_name
     max_tokens = max_tokens or settings.max_tokens
 
+    # Check cache first
+    cache_key = (provider, model, max_tokens, streaming)
+    if cache_key in _llm_cache:
+        logger.debug(f"Returning cached LLM: provider={provider}, model={model}")
+        return _llm_cache[cache_key]
+
     logger.info(f"Creating LLM: provider={provider}, model={model}, max_tokens={max_tokens}")
 
     # Validate model against supported high-reasoning models
@@ -74,13 +83,15 @@ def get_chat_model(
         from langchain_anthropic import ChatAnthropic
 
         logger.debug("Initializing ChatAnthropic")
-        return ChatAnthropic(
+        llm = ChatAnthropic(
             model=model,
             api_key=settings.anthropic_api_key,
             max_tokens=max_tokens,
             streaming=streaming,
             model_kwargs={"extra_headers": {"anthropic-beta": "prompt-caching-2024-07-31"}},
         )
+        _llm_cache[cache_key] = llm
+        return llm
 
     elif provider == "openai":
         if not settings.openai_api_key:
@@ -90,12 +101,14 @@ def get_chat_model(
         from langchain_openai import ChatOpenAI
 
         logger.debug("Initializing ChatOpenAI")
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model,
             api_key=settings.openai_api_key,
             max_tokens=max_tokens,
             streaming=streaming,
         )
+        _llm_cache[cache_key] = llm
+        return llm
 
     elif provider == "google":
         if not settings.google_api_key:
@@ -105,12 +118,14 @@ def get_chat_model(
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         logger.debug("Initializing ChatGoogleGenerativeAI")
-        return ChatGoogleGenerativeAI(
+        llm = ChatGoogleGenerativeAI(
             model=model,
             google_api_key=settings.google_api_key,
             max_output_tokens=max_tokens,
             streaming=streaming,
         )
+        _llm_cache[cache_key] = llm
+        return llm
 
     else:
         logger.error(f"Unknown LLM provider: {provider}")

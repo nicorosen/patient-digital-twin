@@ -524,7 +524,7 @@ def display_conversation_sidebar():
     st.subheader("💬 Conversations")
 
     # New Chat button
-    if st.button("➕ New Chat", key="new_chat_btn", use_container_width=True):
+    if st.button("➕ New Chat", key="new_chat_btn", width="stretch"):
         start_new_chat()
         st.rerun()
 
@@ -569,7 +569,7 @@ def display_conversation_sidebar():
                     rename_session(session_id_str, new_title)
                     st.rerun()
             # Cancel button
-            if st.button("Cancel", key=f"cancel_rename_{session_id_str}", use_container_width=True):
+            if st.button("Cancel", key=f"cancel_rename_{session_id_str}", width="stretch"):
                 st.session_state.editing_session_id = None
                 st.rerun()
         else:
@@ -583,7 +583,7 @@ def display_conversation_sidebar():
                 if st.button(
                     btn_label,
                     key=f"session_{session_id_str}",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary" if is_current else "secondary",
                     help=btn_help,
                 ):
@@ -819,7 +819,7 @@ def display_member_management(patient_id):
                         key="add_member_user",
                     )
 
-                    if st.button("Add User", type="primary", use_container_width=True):
+                    if st.button("Add User", type="primary", width="stretch"):
                         from src.schemas import PatientMemberCreate
                         PatientMemberRepository.add_member(
                             db,
@@ -924,7 +924,7 @@ def display_medication_timeline(patient_id):
             color_discrete_map={"Active": "#4CAF50", "Completed": "#9E9E9E", "Stopped": "#F44336"},
         )
         fig.update_layout(height=max(200, len(data) * 40))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def display_severity_chart(patient_id):
@@ -959,7 +959,7 @@ def display_severity_chart(patient_id):
             height=300,
             showlegend=True,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def display_consultation_history_chart(patient_id):
@@ -983,7 +983,7 @@ def display_consultation_history_chart(patient_id):
             labels={"x": "Month", "y": "Consultations"},
         )
         fig.update_layout(height=300)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def get_medical_assistant_prompts():
@@ -1240,7 +1240,7 @@ def main():
                 for idx, prompt in enumerate(prompts):
                     display_text = prompt if len(prompt) <= 45 else prompt[:42] + "..."
                     with chip_cols[idx]:
-                        if st.button(display_text, key=f"chip_{category}_{idx}", use_container_width=True, help=prompt):
+                        if st.button(display_text, key=f"chip_{category}_{idx}", width="stretch", help=prompt):
                             logger.info(f"Quick action clicked: {prompt[:50]}")
                             st.session_state.messages.append({"role": "user", "content": prompt})
                             save_message_to_db("user", prompt)
@@ -1358,13 +1358,22 @@ def main():
                 else:
                     agent = st.session_state._cached_agent
 
-                response = agent.chat(
-                    user_prompt,
-                    st.session_state.messages[:-1],
-                    on_tool_start=_on_tool_start,
-                )
+                if hasattr(agent, "chat_stream"):
+                    response = st.write_stream(
+                        agent.chat_stream(
+                            user_prompt,
+                            st.session_state.messages[:-1],
+                            on_tool_start=_on_tool_start,
+                        )
+                    )
+                else:
+                    response = agent.chat(
+                        user_prompt,
+                        st.session_state.messages[:-1],
+                        on_tool_start=_on_tool_start,
+                    )
+                    st.markdown(response)
                 status_placeholder.update(label="Done", state="complete")
-                st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 save_message_to_db("assistant", response)
                 logger.info(f"Agent response generated: agent={st.session_state.agent_type}, length={len(response)}")

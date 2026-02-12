@@ -12,6 +12,7 @@ from typing import List, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from src.config import get_settings
 from src.llm import get_chat_model
 from src.logging_config import get_logger
 from src.schemas import DeidentifiedContext
@@ -61,7 +62,11 @@ class BaseSpecialist:
     def __init__(self):
         """Initialize the specialist agent."""
         logger.info(f"Initializing {self.__class__.__name__}")
-        self.llm = get_chat_model()
+        settings = get_settings()
+        self.llm = get_chat_model(
+            provider=settings.specialist_provider,
+            model=settings.specialist_model,
+        )
         self.structured_llm = self.llm.with_structured_output(SpecialistResponse)
 
     def _format_context(self, context: DeidentifiedContext) -> str:
@@ -104,8 +109,8 @@ class BaseSpecialist:
         self,
         context: DeidentifiedContext,
         clinical_question: str,
-    ) -> SpecialistResponse:
-        """Consult the specialist with a clinical question."""
+    ) -> str:
+        """Consult the specialist with a clinical question. Returns plain text."""
         logger.info(
             f"{self.specialty_name} consultation: age={context.age}, gender={context.gender}, "
             f"conditions={len(context.conditions)}, medications={len(context.medications)}"
@@ -115,23 +120,29 @@ class BaseSpecialist:
         messages = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(
-                content=f"{formatted_context}\n\n## Clinical Question\n\n{clinical_question}"
+                content=(
+                    f"{formatted_context}\n\n## Clinical Question\n\n{clinical_question}"
+                    "\n\nBe concise. Respond with:\n"
+                    "1. **Assessment** (2-3 paragraphs)\n"
+                    "2. **Red Flags** (if any)\n"
+                    "3. **Top 3 Recommendations** with priority (urgent/routine/optional)\n"
+                    "4. **Guidelines Referenced**\n"
+                    "5. **Limitations**"
+                )
             ),
         ]
 
-        response = self.structured_llm.invoke(messages)
-        logger.info(
-            f"{self.specialty_name} consultation completed: confidence={response.confidence}, "
-            f"recommendations={len(response.recommendations)}, red_flags={len(response.red_flags)}"
-        )
-        return response
+        response = self.llm.invoke(messages)
+        text = response.content if isinstance(response.content, str) else str(response.content)
+        logger.info(f"{self.specialty_name} consultation completed: {len(text)} chars")
+        return text
 
     async def aconsult(
         self,
         context: DeidentifiedContext,
         clinical_question: str,
-    ) -> SpecialistResponse:
-        """Async version of consult."""
+    ) -> str:
+        """Async version of consult. Returns plain text."""
         logger.info(
             f"{self.specialty_name} async consultation: age={context.age}, gender={context.gender}, "
             f"conditions={len(context.conditions)}, medications={len(context.medications)}"
@@ -141,13 +152,19 @@ class BaseSpecialist:
         messages = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(
-                content=f"{formatted_context}\n\n## Clinical Question\n\n{clinical_question}"
+                content=(
+                    f"{formatted_context}\n\n## Clinical Question\n\n{clinical_question}"
+                    "\n\nBe concise. Respond with:\n"
+                    "1. **Assessment** (2-3 paragraphs)\n"
+                    "2. **Red Flags** (if any)\n"
+                    "3. **Top 3 Recommendations** with priority (urgent/routine/optional)\n"
+                    "4. **Guidelines Referenced**\n"
+                    "5. **Limitations**"
+                )
             ),
         ]
 
-        response = await self.structured_llm.ainvoke(messages)
-        logger.info(
-            f"{self.specialty_name} async consultation completed: confidence={response.confidence}, "
-            f"recommendations={len(response.recommendations)}, red_flags={len(response.red_flags)}"
-        )
-        return response
+        response = await self.llm.ainvoke(messages)
+        text = response.content if isinstance(response.content, str) else str(response.content)
+        logger.info(f"{self.specialty_name} async consultation completed: {len(text)} chars")
+        return text

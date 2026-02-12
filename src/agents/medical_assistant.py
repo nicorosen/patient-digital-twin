@@ -9,7 +9,8 @@ The patient-facing agent that:
 """
 
 import json
-from typing import Callable, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Generator, List, Optional
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -85,91 +86,20 @@ def _format_response_for_log(response) -> str:
     return "\n".join(parts)
 
 SYSTEM_PROMPT = """You are a Medical Assistant helping a patient manage their health information.
-You have access to the patient's health profile and can help them understand their conditions,
-medications, and allergies.
 
-## Your Capabilities
-
-1. **Answer Questions**: Use the search and profile tools to answer questions about their health.
-2. **Gather Information**: When a patient mentions new health information (conditions, medications,
-   allergies, procedures/treatments), extract the details and confirm with them before adding to their record.
-3. **Explain Clearly**: Always explain medical terms in plain language at a 6th grade reading level.
-4. **Consult Specialists**: When a patient has clinical questions about symptoms, medication
-   interactions, or health concerns, you can consult specialists on their behalf.
-   All specialists receive only de-identified information (no name, birthdate, etc.).
-
-   Available specialists:
-   - **Primary Care**: General medicine, preventive care, chronic disease management
-   - **Cardiology**: Chest pain, heart failure, arrhythmias, hypertension, cholesterol
-   - **Endocrinology**: Diabetes, thyroid, hormonal disorders, metabolic syndrome
-   - **Pulmonology**: Asthma, COPD, shortness of breath, chronic cough, sleep apnea
-   - **Neurology**: Headaches, seizures, dizziness, numbness, memory concerns, stroke risk
-   - **Gastroenterology**: Acid reflux, IBS, IBD, liver disease, digestive issues
-   - **Oncology**: Cancer screening, suspicious symptoms, treatment side effects
-   - **Psychiatry**: Depression, anxiety, mood changes, sleep problems, stress
-   - **Orthopedics**: Joint pain, arthritis, back pain, fractures, sports injuries
-   - **Nephrology**: Kidney disease, electrolyte imbalances, kidney stones
-   - **Dermatology**: Rashes, eczema, psoriasis, skin lesions, drug reactions on skin
-
-   Use `consult_medical_board` to consult multiple specialists at once when a question
-   spans multiple domains.
-
-5. **Search the Web**: When you need up-to-date medical information not available in
-   the patient's records, use `search_medical_web` to look up:
-   - Drug interactions, side effects, and contraindications
-   - Clinical guidelines and treatment protocols
-   - Medical conditions, symptoms, and latest research
-   - Dosage information and medication details
-
-   Always cite the source when sharing web search results with the patient.
+## Capabilities
+1. **Answer Questions** about their health using profile and search tools.
+2. **Gather Information**: Extract new conditions, medications, or allergies from conversation. Always confirm before adding to records.
+3. **Consult Specialists**: For clinical questions, consult the appropriate specialist tool. Specialists receive only de-identified data. Use `consult_medical_board` for multi-domain questions.
+4. **Web Search**: Use `search_medical_web` for up-to-date drug info, guidelines, or research. Cite sources.
 
 ## Guidelines
-
-- Be empathetic and supportive, but professional
-- Always confirm details before adding new information to the patient's record
-- For clinical questions, choose the most appropriate specialist(s) based on the topic.
-  Use consult_primary_care as a fallback when no specific specialty fits.
-- When presenting specialist advice, translate clinical language to plain language (6th grade level)
-- When extracting information, ask clarifying questions if details are unclear
-- Never make up information - only report what's in the patient's health record
-
-## Current Patient
-
-You are assisting the patient whose ID will be provided. Always use this patient_id when calling tools.
-
-## Response Format
-
-- Use clear, simple language
-- Break complex information into bullet points
-- Highlight important warnings or allergies
-- Keep responses concise but complete
-"""
-
-EXTRACTION_PROMPT = """
-When a patient shares new health information, extract structured data:
-
-1. **Conditions**: Look for diagnoses, medical conditions, health problems
-   - Name of condition
-   - When it started (onset)
-   - Current status (active, resolved, etc.)
-   - Severity if mentioned
-
-2. **Medications**: Look for drugs, prescriptions, treatments
-   - Medication name
-   - Dosage (e.g., "500mg")
-   - How often (e.g., "twice daily")
-   - Why they take it
-
-3. **Allergies**: Look for allergic reactions, intolerances
-   - What they're allergic to
-   - Type (medication, food, environmental)
-   - Reaction description
-   - Severity
-
-After extraction, confirm with the patient:
-"Let me confirm what I heard: [summarize]. Is this correct?"
-
-Only add to their record after confirmation.
+- Explain medical terms in plain language (6th grade reading level)
+- Translate specialist responses to patient-friendly language
+- Confirm before adding records; ask clarifying questions if details are unclear
+- Never fabricate information
+- Use clear, concise language with bullet points
+- Highlight warnings and allergies
 """
 
 
@@ -262,7 +192,7 @@ the patient can understand.
         from datetime import date as _date
         date_context = f"\n\nToday's date is {_date.today().strftime('%B %d, %Y')}.\n"
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT + date_context + "\n" + EXTRACTION_PROMPT + "\n\n" + role_prompt),
+            SystemMessage(content=SYSTEM_PROMPT + date_context + "\n" + role_prompt),
             SystemMessage(content=f"Current patient_id: {self.patient_id}"),
         ]
 
@@ -427,6 +357,96 @@ the patient can understand.
             f"  {Colors.DIM}Tool iterations:{Colors.RESET} {iteration}"
         )
         return final_response
+
+    def _execute_tools_parallel(self, tool_calls, on_tool_start=None):
+        """Execute multiple tool calls in parallel using threads."""
+        if on_tool_start:
+            names = [tc.get("name", "") for tc in tool_calls]
+            on_tool_start(names[0])
+
+        if len(tool_calls) == 1:
+            result = self._execute_tool_call(tool_calls[0])
+            return [{"tool_call_id": tool_calls[0].get("id"), "output": result}]
+
+        results = [None] * len(tool_calls)
+
+        def _run(idx, tc):
+            if on_tool_start:
+                on_tool_start(tc.get("name", ""))
+            results[idx] = {"tool_call_id": tc.get("id"), "output": self._execute_tool_call(tc)}
+
+        with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
+            futures = [executor.submit(_run, i, tc) for i, tc in enumerate(tool_calls)]
+            for f in futures:
+                f.result()
+
+        return results
+
+    def chat_stream(
+        self,
+        message: str,
+        conversation_history: Optional[List[dict]] = None,
+        on_tool_start: Optional[Callable[[str], None]] = None,
+    ) -> Generator[str, None, None]:
+        """
+        Process a chat message and stream the final response.
+
+        Tool calls execute normally (blocking), then the final LLM
+        response streams token-by-token.
+        """
+        logger.info(f"chat_stream: patient={self.patient_id}")
+        messages = self._build_messages(message, conversation_history)
+
+        response = self.llm_with_tools.invoke(messages)
+
+        max_iterations = 5
+        iteration = 0
+
+        while response.tool_calls and iteration < max_iterations:
+            iteration += 1
+            logger.info(f"Tool loop iteration {iteration}: {len(response.tool_calls)} tools")
+
+            tool_results = self._execute_tools_parallel(response.tool_calls, on_tool_start)
+
+            messages.append(response)
+            from langchain_core.messages import ToolMessage
+            for i, tool_call in enumerate(response.tool_calls):
+                messages.append(
+                    ToolMessage(
+                        content=tool_results[i]["output"],
+                        tool_call_id=tool_call.get("id"),
+                    )
+                )
+
+            # Check if more tool calls needed
+            if on_tool_start:
+                on_tool_start("__thinking__")
+            response = self.llm_with_tools.invoke(messages)
+
+        if iteration > 0 and not response.tool_calls:
+            # After tool calls, stream the final synthesis
+            for chunk in self.llm_with_tools.stream(messages):
+                text = self._extract_chunk_text(chunk)
+                if text:
+                    yield text
+        else:
+            # No tools were called, or max iterations hit.
+            # Yield the already-received content directly.
+            yield self._extract_chunk_text(response) or str(response.content)
+
+    def _extract_chunk_text(self, chunk) -> str:
+        """Extract text from a streaming chunk."""
+        if isinstance(chunk.content, str):
+            return chunk.content
+        elif isinstance(chunk.content, list):
+            parts = []
+            for block in chunk.content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    parts.append(block)
+            return "".join(parts)
+        return ""
 
     async def achat(
         self,
